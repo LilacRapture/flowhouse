@@ -1,0 +1,148 @@
+# Architecture Decision Records (ADR) — flowhouse
+
+## ADR-001 — LocalExecutor via `airflow standalone`, not CeleryExecutor
+
+**Date:** project start
+**Status:** Accepted
+
+**Decision:** Run Airflow with `AIRFLOW__CORE__EXECUTOR=LocalExecutor` using
+the `airflow standalone` command (webserver + scheduler + triggerer in one
+process/container), backed by a dedicated Postgres for Airflow's own
+metadata. No Redis, no separate worker service.
+
+**Context:** The goal of this project is to get hands-on with Airflow
+itself. CeleryExecutor's main new concept — a distributed task queue via
+Redis — is something already demonstrated elsewhere in the portfolio
+(Redis in the URL Shortener project), so it wouldn't add a new skill here,
+only more moving parts to run and debug locally.
+
+**Alternatives considered:**
+- CeleryExecutor (+Redis +worker) — more "production-like," but the
+  portfolio differentiation goal is better served by keeping the new
+  surface area focused on Airflow + ClickHouse.
+- SequentialExecutor — the true minimal option, but can't run tasks in
+  parallel at all (even the two independent health-check tasks in the
+  skeleton DAG), which undersells even basic Airflow scheduling.
+
+**Consequences:**
+- Single point of failure for the whole Airflow stack (one container) —
+  acceptable for a local portfolio demo, would need revisiting for any
+  real deployment.
+- `airflow standalone` auto-creates an admin user and prints its password
+  to the container logs on first run — not meant for anything beyond
+  local/dev use.
+
+---
+
+## ADR-002 — Reach TaskTracker via `host.docker.internal`, no shared Docker network
+
+**Date:** project start
+**Status:** Accepted
+
+**Decision:** TaskTracker keeps its own docker-compose stack, fully
+independent of this project's. The Airflow container reaches TaskTracker's
+API at `http://host.docker.internal:8000` (configurable via
+`TASKTRACKER_BASE_URL`) rather than joining a shared Docker network across
+both repos.
+
+**Context:** Same reasoning as petrag ADR-003: portfolio projects are
+intentionally separate repos/stacks to demonstrate range, not one
+mega-compose file. This project treats TaskTracker as an external system
+it happens to read from — via its public HTTP API — the same way petrag
+treats Ollama as an external system on the host.
+
+**Alternatives considered:**
+- Shared external Docker network (`docker network create shared-net`,
+  both compose files attach to it) — would work, but couples two
+  otherwise-independent repos' deployment lifecycles together for no
+  real benefit here (unlike, say, wanting SQL-level access to
+  TaskTracker's database, which would additionally raise its own
+  cross-service data-ownership questions).
+
+**Consequences:**
+- Requires TaskTracker's compose stack to be running separately
+  (`docker-compose up` in its own repo) before this project's extractor
+  can succeed.
+- Only works on Docker Desktop / OrbStack, which resolve
+  `host.docker.internal` automatically; a Linux host would need the
+  `extra_hosts: host.docker.internal:host-gateway` entry (see petrag's
+  docker-compose.yml for the same caveat).
+
+---
+
+## ADR-003 — Bind-mount `dags/`, `src/`, `tests/` instead of baking them into the image
+
+**Date:** project start
+**Status:** Accepted
+
+**Decision:** `docker-compose.yml` bind-mounts `./dags`, `./src`, and
+`./tests` into the Airflow container. The Dockerfile only installs Python
+dependencies (`requirements.txt`) — it does not `COPY` our own code.
+
+**Context:** This is the opposite choice from TaskTracker's ADR-013, which
+deliberately removed bind mounts so the container runs from the image's
+own baked-in code copy. Airflow's normal dev workflow expects the
+scheduler to pick up DAG file changes live (it polls `dags/` on an
+interval) without a rebuild — that's standard practice in Airflow's own
+quick-start docs, not a shortcut specific to this project.
+
+**Consequences:**
+- Editing a DAG or a `src/` module takes effect within Airflow's DAG-file
+  scan interval — no `docker compose build` needed during development.
+- If this project ever needs a "frozen" deployment (e.g. a demo snapshot
+  meant to run unmodified), that would warrant switching to an
+  image-baked copy, mirroring TaskTracker's approach, and should get its
+  own ADR at that point.
+
+---
+
+## ADR-004 — Dedicated ClickHouse user, not `default`
+
+**Date:** skeleton verification
+**Status:** Accepted
+
+**Decision:** `docker-compose.yml` sets `CLICKHOUSE_DB` / `CLICKHOUSE_USER` /
+`CLICKHOUSE_PASSWORD` / `CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT=1` on the
+`clickhouse` service, and all clients (currently just
+`check_clickhouse()` in the skeleton DAG) authenticate as that user via
+`CLICKHOUSE_USER` / `CLICKHOUSE_PASSWORD` env vars — never as `default`.
+
+**Context:** First manual test run failed with `AUTHENTICATION_FAILED`
+even with no password configured anywhere. Per ClickHouse's own Docker
+docs, the `default` user's network access is disabled outright unless at
+least one of `CLICKHOUSE_USER`, `CLICKHOUSE_PASSWORD`, or
+`CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT` is set — so leaving all three
+unset (the skeleton's original state) doesn't mean "open/no-auth," it
+means "no client can authenticate over the network at all."
+
+**Alternatives considered:**
+- `CLICKHOUSE_SKIP_USER_SETUP=1` — makes `default` reachable with no
+  password. Simpler, but leaves a literally unauthenticated user open on
+  the network; a named user with a password (even a throwaway one for
+  local dev) is a small cost for not normalizing "no auth" as the
+  project's default.
+
+**Consequences:**
+- Credentials live in `.env` (`CLICKHOUSE_USER`/`CLICKHOUSE_PASSWORD`),
+  same convention as `AIRFLOW_DB_*`.
+- Any future loader (`src/load/clickhouse_loader.py`) must read these
+  same two env vars rather than connecting as `default`.
+
+---
+
+## Template for new ADRs
+
+```
+## ADR-00N — Title
+
+**Date:**
+**Status:** Accepted / Superseded by ADR-00X / Deprecated
+
+**Decision:**
+
+**Context:**
+
+**Alternatives considered:**
+
+**Consequences:**
+```
