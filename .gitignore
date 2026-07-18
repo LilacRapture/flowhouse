@@ -1,0 +1,12 @@
+__pycache__/
+*.pyc
+.venv/
+venv/
+.env
+
+# Airflow runtime artifacts (bind-mounted, generated inside the container)
+logs/
+standalone_admin_password.txt
+
+# OS
+.DS_Store

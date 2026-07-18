@@ -1,0 +1,9 @@
+# Installed on top of apache/airflow:2.9.3-python3.12 (which already
+# ships Airflow core + the postgres provider for the metadata DB).
+requests==2.32.3
+pandas==2.2.2
+clickhouse-connect==0.7.19
+
+# Dev/lint (run outside the container too, e.g. in a local venv)
+ruff==0.6.9
+pytest==8.2.2

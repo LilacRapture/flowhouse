@@ -1,0 +1,74 @@
+services:
+  # Airflow's own metadata DB (DAG runs, task instances, users, etc.)
+  # NOT related to any pet-project's data — that only ever lands in ClickHouse.
+  airflow-postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: ${AIRFLOW_DB_USER}
+      POSTGRES_PASSWORD: ${AIRFLOW_DB_PASSWORD}
+      POSTGRES_DB: ${AIRFLOW_DB_NAME}
+    volumes:
+      - airflow_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${AIRFLOW_DB_USER} -d ${AIRFLOW_DB_NAME}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  clickhouse:
+    image: clickhouse/clickhouse-server:24.8
+    environment:
+      # Without at least one of these three, the image disables network
+      # access for the `default` user entirely (documented behavior) —
+      # so a dedicated user is required, not optional. See ADR-004.
+      CLICKHOUSE_DB: ${CLICKHOUSE_DB}
+      CLICKHOUSE_USER: ${CLICKHOUSE_USER}
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD}
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: "1"
+    ports:
+      - "8123:8123"   # HTTP interface (used by clickhouse-connect)
+      - "9000:9000"   # native protocol
+    volumes:
+      - clickhouse_data:/var/lib/clickhouse
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8123/ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  airflow:
+    build: .
+    ports:
+      - "8080:8080"
+    environment:
+      AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${AIRFLOW_DB_USER}:${AIRFLOW_DB_PASSWORD}@airflow-postgres/${AIRFLOW_DB_NAME}
+      AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+      AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "true"
+      AIRFLOW__WEBSERVER__EXPOSE_CONFIG: "false"
+      # Our own extractor/loader code lives outside dags/ so DAG files stay thin (ADR-002)
+      PYTHONPATH: /opt/airflow/src
+      TASKTRACKER_BASE_URL: ${TASKTRACKER_BASE_URL}
+      CLICKHOUSE_HOST: clickhouse
+      CLICKHOUSE_HTTP_PORT: "8123"
+      CLICKHOUSE_USER: ${CLICKHOUSE_USER}
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD}
+    volumes:
+      # Bind-mounted (not baked into the image) so DAG/src edits are picked up
+      # without a rebuild — see ADR-003 for why this deviates from TaskTracker's
+      # image-only deploy (ADR-013 there).
+      - ./dags:/opt/airflow/dags
+      - ./src:/opt/airflow/src
+      - ./tests:/opt/airflow/tests
+      - airflow_logs:/opt/airflow/logs
+    command: standalone
+    depends_on:
+      airflow-postgres:
+        condition: service_healthy
+      clickhouse:
+        condition: service_healthy
+
+volumes:
+  airflow_postgres_data:
+  clickhouse_data:
+  airflow_logs:
