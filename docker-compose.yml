@@ -49,6 +49,7 @@ services:
       # Our own extractor/loader code lives outside dags/ so DAG files stay thin (ADR-002)
       PYTHONPATH: /opt/airflow/src
       TASKTRACKER_BASE_URL: ${TASKTRACKER_BASE_URL}
+      AIRFLOW_CONN_TASKTRACKER_API: ${AIRFLOW_CONN_TASKTRACKER_API}
       CLICKHOUSE_HOST: clickhouse
       CLICKHOUSE_HTTP_PORT: "8123"
       CLICKHOUSE_USER: ${CLICKHOUSE_USER}

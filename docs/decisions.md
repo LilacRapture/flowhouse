@@ -130,6 +130,46 @@ means "no client can authenticate over the network at all."
 
 ---
 
+## ADR-005 — TaskTracker credentials via env-var Airflow Connection
+
+**Date:** Phase 1 start
+**Status:** Accepted
+
+**Decision:** Store TaskTracker's login credentials as an Airflow
+Connection defined via the `AIRFLOW_CONN_TASKTRACKER_API` env var (URI
+format), set in `.env` — not created manually through the Airflow UI, and
+not a bespoke `TASKTRACKER_USER`/`TASKTRACKER_PASSWORD` pair read
+directly by our own code.
+
+**Context:** Needed a way to store TaskTracker credentials that (a)
+doesn't hardcode secrets, (b) doesn't require a manual UI step on every
+fresh environment, and (c) uses Airflow's own secrets mechanism rather
+than reinventing it. Env-var Connections satisfy all three — Airflow
+parses `AIRFLOW_CONN_<CONN_ID>` at startup and it's retrievable the same
+way as a UI-created one (`BaseHook.get_connection("tasktracker_api")`).
+
+**Alternatives considered:**
+- Manual Connection via Airflow UI — standard Airflow practice, but a
+  manual step that's easy to forget when recreating an environment; not
+  reproducible from a fresh `.env`.
+- Plain `TASKTRACKER_USER`/`TASKTRACKER_PASSWORD` env vars read directly
+  by `src/extract/tasktracker.py` — simplest, but sidesteps Airflow's
+  built-in credential storage/masking for no real benefit.
+
+**Consequences:**
+- TaskTracker logs in via **email**, which contains `@` — and `@` is
+  already the URI's separator between userinfo and host. The email must
+  be percent-encoded (`%40`) in the env var or the Connection parses
+  incorrectly. Documented directly in `.env.example`.
+- `src/extract/tasktracker.py` will retrieve
+  this via `BaseHook.get_connection("tasktracker_api")` and use
+  `.login` / `.password` as the email/password pair for
+  `POST /api/auth/login/` — not as HTTP Basic Auth headers, since
+  TaskTracker's login endpoint expects a JSON body, not a `Connection`
+  object is just a generic credential container here.
+
+---
+
 ## Template for new ADRs
 
 ```
