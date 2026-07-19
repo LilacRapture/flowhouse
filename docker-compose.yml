@@ -62,6 +62,7 @@ services:
       - ./src:/opt/airflow/src
       - ./tests:/opt/airflow/tests
       - airflow_logs:/opt/airflow/logs
+      - airflow_data:/opt/airflow/data
     command: standalone
     depends_on:
       airflow-postgres:
@@ -73,3 +74,4 @@ volumes:
   airflow_postgres_data:
   clickhouse_data:
   airflow_logs:
+  airflow_data:
