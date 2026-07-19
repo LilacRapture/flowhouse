@@ -170,6 +170,43 @@ way as a UI-created one (`BaseHook.get_connection("tasktracker_api")`).
 
 ---
 
+## ADR-006 — Write parquet via pyarrow directly, not pandas.to_parquet()
+
+**Date:** Phase 1
+**Status:** Accepted
+
+**Decision:** `src/extract/tasktracker.py`'s `_write_parquet()` builds a
+`pyarrow.Table` from the raw records and writes it with
+`pyarrow.parquet.write_table()` — it does not go through
+`pandas.DataFrame.to_parquet()`.
+
+**Context:** `pd.DataFrame.from_records()` silently upcasts integer
+columns containing `None` to `float64` (confirmed: `{"id": 5}` /
+`{"id": None}` in the same column → `5.0` / `nan`, not `5` / `null`).
+Extract's job is to persist raw data unmodified — introducing pandas'
+type-coercion quirks at this stage, before any real processing happens,
+was an avoidable source of silent data corruption for nullable fields
+(e.g. a future flat nullable FK id).
+
+**Alternatives considered:**
+- `pd.DataFrame.to_parquet(engine="pyarrow")` — works, and pandas does
+  use pyarrow under the hood regardless, but still round-trips through a
+  pandas DataFrame first (extra conversion, and the upcast footgun above)
+  for no benefit — extract does no DataFrame-specific operations at all.
+
+**Consequences:**
+- The parquet file itself correctly preserves `int64` + null (verified
+  directly via `pyarrow.parquet.read_table()`).
+- **This alone does not fully solve the problem** — `pandas.read_parquet()`
+  with its default settings *still* upcasts int64+null back to `float64`
+  on the way in, regardless of how the file was written. The transform
+  step (Phase 1, not written yet) must call
+  `pd.read_parquet(path, dtype_backend="numpy_nullable")` to actually get
+  proper nullable `Int64` columns — noted in `src/transform/__init__.py`
+  so this isn't rediscovered the hard way later.
+
+---
+
 ## Template for new ADRs
 
 ```

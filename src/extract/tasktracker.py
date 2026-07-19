@@ -15,9 +15,10 @@ is meant to cross an Airflow XCom boundary — never the DataFrame itself.
 """
 import logging
 import os
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
-import pandas as pd
+import pyarrow as pa
+import pyarrow.parquet as pq
 import requests
 from airflow.hooks.base import BaseHook
 
@@ -61,10 +62,22 @@ def _fetch_all_pages(session: requests.Session, url: str) -> list[dict]:
 
 
 def _write_parquet(records: list[dict], resource: str) -> str:
+    """
+    Writes raw records straight to parquet via pyarrow, without building a
+    pandas DataFrame first. Two reasons, not just one: (1) extract's job
+    is to persist data unmodified — no pandas-specific processing happens
+    here, so there's no need for its API; (2) pandas silently upcasts
+    integer columns containing None to float64 (e.g. a nullable FK id
+    becomes 5.0 instead of 5) — pyarrow keeps them as nullable int64. The
+    transform step (pandas, by design) reads this file back afterwards.
+    """
     os.makedirs(DATA_DIR, exist_ok=True)
-    run_date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    run_date = datetime.now(UTC).strftime("%Y-%m-%d")
     path = os.path.join(DATA_DIR, f"{resource}_{run_date}.parquet")
-    pd.DataFrame.from_records(records).to_parquet(path, index=False)
+
+    table = pa.Table.from_pylist(records)
+    pq.write_table(table, path)
+
     logger.info("Wrote %d %s record(s) to %s", len(records), resource, path)
     return path
 

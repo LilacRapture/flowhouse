@@ -61,6 +61,7 @@ services:
       - ./dags:/opt/airflow/dags
       - ./src:/opt/airflow/src
       - ./tests:/opt/airflow/tests
+      - ./pyproject.toml:/opt/airflow/pyproject.toml
       - airflow_logs:/opt/airflow/logs
       - airflow_data:/opt/airflow/data
     command: standalone
