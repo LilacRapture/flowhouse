@@ -357,6 +357,57 @@ ClickHouse instance, not during transform's own tests.
 
 ---
 
+## ADR-011 — Per-day partition refresh for daily_task_snapshot, not whole-table truncate
+
+**Date:** Phase 1
+**Status:** Accepted
+
+**Decision:** `daily_task_snapshot` is a `MergeTree` table with
+`PARTITION BY snapshot_date` (one partition per day). Loading refreshes
+only the partition matching the run's `snapshot_date` — via
+`ALTER TABLE ... DROP PARTITION` followed by `insert_df()` — not a
+whole-table `TRUNCATE`.
+
+**Context:** `src/load/__init__.py`'s original placeholder docstring
+described "full refresh (truncate + insert)" as the MVP loading
+strategy. That description predates ADR-008 (daily snapshot by DAG run
+date, accumulating forward, never rewriting other days). A whole-table
+truncate on every run would delete all previously accumulated snapshot
+history and leave only the current run's day — directly undoing the
+reason a snapshot model was chosen over a created_at cohort in the
+first place. Per-day partition drop+reload gives the same idempotency
+guarantee (safe to retry/backfill a given day) without touching other
+days.
+
+**Alternatives considered:**
+- Whole-table `TRUNATE` + insert (the original placeholder plan) —
+  simplest, but incompatible with ADR-008 as described above.
+- `ALTER TABLE ... DELETE WHERE snapshot_date = ...` instead of
+  `DROP PARTITION` — works without partitioning, but ClickHouse
+  mutations are asynchronous background operations, not immediate;
+  `DROP PARTITION` on an explicitly date-partitioned table is a
+  lightweight, synchronous metadata operation and the standard
+  ClickHouse pattern for exactly this "reload one day" scenario.
+- Monthly partitions (`PARTITION BY toYYYYMM(snapshot_date)`) — fewer
+  partitions overall, but `DROP PARTITION` would then delete an entire
+  month's data to reload one day within it; daily partitions are the
+  only granularity that matches the reload boundary we actually need.
+
+**Consequences:**
+- `src/load/__init__.py`'s docstring updated to describe per-day
+  partition refresh instead of whole-table truncate.
+- Not atomic across the two statements (drop, then insert) — ClickHouse
+  has no cross-statement transactions. A failure between them leaves
+  that day's partition empty until the next successful run; acceptable
+  given Airflow's own retry mechanism is the natural recovery path for
+  an idempotent per-day task.
+- `client` is passed into `load_daily_task_snapshot()` and `ensure_table()`
+  explicitly, not created internally — same DI convention as petrag's
+  `ingestion/vector_store.py`, keeps both functions testable with a fake
+  client.
+
+---
+
 ## Template for new ADRs
 
 ```

@@ -49,8 +49,9 @@ See `docs/architecture.md` for the full picture. Short version:
       (tested end-to-end with mocked HTTP, see `tests/test_extract_tasktracker.py`)
 - [x] `src/transform/pandas_ops.py` — daily/per-project/per-status
       aggregates
-- [ ] `src/load/clickhouse_loader.py` — `raw_tasks` + `daily_task_stats`
-      tables, full-refresh load
+- [x] `src/load/clickhouse_loader.py` — `daily_task_snapshot` table
++     (MergeTree, PARTITION BY snapshot_date), per-day partition
++     refresh load
 - [ ] Replace `health_check.py`'s inline functions with a real
       `sync_tasktracker_to_clickhouse` DAG calling into `src/`
 
