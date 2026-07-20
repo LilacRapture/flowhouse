@@ -47,7 +47,7 @@ See `docs/architecture.md` for the full picture. Short version:
 - [x] `src/extract/tasktracker.py` — JWT login via Airflow Connection,
       paginated pull of `/api/tasks/` + `/api/projects/`, write parquet
       (tested end-to-end with mocked HTTP, see `tests/test_extract_tasktracker.py`)
-- [ ] `src/transform/pandas_ops.py` — daily/per-project/per-status
+- [x] `src/transform/pandas_ops.py` — daily/per-project/per-status
       aggregates
 - [ ] `src/load/clickhouse_loader.py` — `raw_tasks` + `daily_task_stats`
       tables, full-refresh load

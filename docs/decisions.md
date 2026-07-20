@@ -199,11 +199,11 @@ was an avoidable source of silent data corruption for nullable fields
   directly via `pyarrow.parquet.read_table()`).
 - **This alone does not fully solve the problem** — `pandas.read_parquet()`
   with its default settings *still* upcasts int64+null back to `float64`
-  on the way in, regardless of how the file was written. The transform
-  step (Phase 1, not written yet) must call
-  `pd.read_parquet(path, dtype_backend="numpy_nullable")` to actually get
-  proper nullable `Int64` columns — noted in `src/transform/__init__.py`
-  so this isn't rediscovered the hard way later.
+  on the way in, regardless of how the file was written. **Amended by
+  ADR-009:** the originally documented fix here (`dtype_backend=
+  "numpy_nullable"`) turned out to have the same upcast bug one level
+  deeper, for nullable *nested struct* fields (`owner`, `project`) —
+  see ADR-009 for the correct read-side setting.
 
 ---
 
@@ -237,6 +237,123 @@ call-shape check than a hand-rolled fake would for free.
   project (transform, load) should still default to concrete fakes
   unless they hit the same "thin external HTTP/SDK client, no logic to
   fake" shape as here.
+
+---
+
+## ADR-008 — Daily snapshot by DAG run date, not cohort by created_at
+
+**Date:** Phase 1
+**Status:** Accepted
+
+**Decision:** `daily_task_snapshot` groups rows by `snapshot_date` — the
+Airflow DAG's logical run date (same date embedded in extract's parquet
+filename) — not by each task's `created_at::date`.
+
+**Context:** Load strategy is full-refresh (truncate + insert) per
+`src/load/__init__.py`. Grouping by `created_at::date` instead would mean
+every run recomputes ALL historical rows from the tasks' current state —
+a task created weeks ago that changes status today silently rewrites its
+historical row instead of the table gaining a new one. That's a
+misleading shape for a table named "daily stats": readers would
+reasonably assume past rows are stable facts, not a re-derived view.
+Grouping by run date instead makes each run append one new day of rows
+and never touch previous days — the standard shape for a daily snapshot
+fact table, and a clearer illustration of the ETL pattern this project
+exists to practice.
+
+**Alternatives considered:**
+- Cohort by `created_at::date` — analytically richer per run (backfills
+  history immediately), but semantically misleading under full-refresh
+  and a poor fit for what "daily snapshot" implies.
+
+**Consequences:**
+- History only accumulates going forward — no data exists for dates
+  before the pipeline started running (acceptable, no backfill
+  requirement exists for this portfolio project).
+- Table renamed `daily_task_snapshot` (was `daily_task_stats` in early
+  planning docs) to avoid the "stats" name implying event-based
+  aggregation.
+- Sets up cleanly for future incremental-load ideas (Open Questions in
+  AGENTS.md) — snapshots are naturally append-only, nothing to redo.
+
+---
+
+## ADR-009 — dtype_backend="pyarrow" for reading parquet in transform (amends ADR-006)
+
+**Date:** Phase 1
+**Status:** Accepted
+
+**Decision:** `src/transform/pandas_ops.py` reads extract's tasks parquet
+with `pd.read_parquet(path, dtype_backend="pyarrow")`, not
+`dtype_backend="numpy_nullable"` as originally documented in ADR-006.
+
+**Context:** ADR-006 established that writing must go through pyarrow
+directly to avoid pandas silently upcasting `int64` + `None` columns to
+`float64`, and recommended reading back with `dtype_backend=
+"numpy_nullable"` to preserve that. Verified empirically while building
+the transform step: `numpy_nullable` (and the plain default backend)
+still upcasts an `int64` child field to `float64` inside a **nested
+struct column** (e.g. `project: struct<id: int64, name: string>`) as
+soon as any row has a null struct (`project=None` — TaskTracker's
+`Task.project` is nullable, `SET_NULL`). Confirmed with a real parquet
+file: reading `project.id` came back as `100.0`, while
+`pyarrow.parquet.read_table(...).to_pylist()` on the exact same file
+correctly returned `100` (int) — the corruption is introduced by
+pandas' struct-to-Python conversion, not present in the underlying data.
+`dtype_backend="pyarrow"` avoids this entirely — verified both for the
+nested-struct case (stays `int64`) and for flat nullable-int columns
+(the scenario ADR-006 originally cared about).
+
+**Alternatives considered:**
+- Read nested `owner`/`project` columns via raw `pyarrow` (bypassing
+  pandas for just those columns), keep `numpy_nullable` for the rest —
+  works, but means two different read mechanisms for one file and two
+  schemas to keep in sync, for no benefit over just switching the
+  backend.
+- Manually cast `int(project["id"])` after extraction — fixes the
+  symptom, not the mechanism ADR-006 was specifically written to avoid;
+  rejected for being the same class of silent-coercion bug ADR-006
+  already decided against, one level deeper.
+
+**Consequences:**
+- Missing nested values arrive as `pd.NA`, not `None` — code checks
+  `isinstance(value, dict)` rather than `is None` / `pd.isna()`.
+- Numeric/aggregate columns produced by pandas operations on
+  `pyarrow`-backed input come back as Arrow-backed dtypes (e.g.
+  `int64[pyarrow]`) rather than plain numpy — noted for
+  `src/load/clickhouse_loader.py`, which should confirm
+  `clickhouse-connect`'s `insert_df()` handles these directly (not yet
+  verified — flag for Phase 1's load step).
+- `src/transform/__init__.py`'s module docstring updated to point to
+  `dtype_backend="pyarrow"` instead of `"numpy_nullable"`.
+
+---
+
+## ADR-010 — snapshot_date as datetime.date, not str, in transform's output
+
+**Date:** Phase 1
+**Status:** Accepted
+
+**Decision:** `build_daily_task_snapshot()` stamps `snapshot_date` as a
+real `datetime.date` object (`pd.Timestamp(snapshot_date).date()`), not
+the raw ISO string passed in.
+
+**Context:** Verified against clickhouse-connect 0.7.19's actual source
+(`datatypes/temporal.py`, `Date._write_column_binary`): the Date-column
+serializer computes `(value - epoch_start_date).days` directly on each
+column value, requiring a `date`/`datetime` object. A plain string
+passes through `_convert_pandas()` untouched (its datetime-specific
+branch only triggers for actual datetime dtypes) and only fails later,
+inside `_write_column_binary`, at actual insert time — i.e. the bug
+would not have surfaced until `clickhouse_loader.py` ran against a real
+ClickHouse instance, not during transform's own tests.
+
+**Consequences:**
+- `src/load/clickhouse_loader.py` can rely on `snapshot_date` already
+  being a proper `date` — no conversion needed on the load side.
+- General principle reinforced (same as ADR-006/ADR-009): fix data
+  typing as early in the pipeline as possible, don't defer correctness
+  to whichever step happens to fail first.
 
 ---
 
