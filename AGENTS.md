@@ -29,6 +29,9 @@ See `docs/architecture.md` for the full picture. Short version:
 - Non-obvious decisions get an ADR in `docs/decisions.md`.
 - No `print()` for debugging — use `logging` (tasks show up in the
   Airflow UI's per-task logs either way).
+- Test philosophy: prefer concrete fake objects over `MagicMock` where a
+  fake is cheap to write. Exception: mocking `requests.Session` in
+  extractor tests uses `MagicMock` — see ADR-007.
 
 ## Status
 
@@ -36,13 +39,14 @@ See `docs/architecture.md` for the full picture. Short version:
 - [x] docker-compose (airflow-postgres, clickhouse, airflow/standalone)
 - [x] `health_check` DAG — confirms TaskTracker API + ClickHouse reachable
 - [x] DAG-import test (`tests/test_health_check_dag.py`)
-+ [x] Verified end-to-end locally: both `check_tasktracker` and
-+     `check_clickhouse` pass (see ADR-004 for the ClickHouse
-+     dedicated-user fix needed to get there)
+- [x] Verified end-to-end locally: both `check_tasktracker` and
+      `check_clickhouse` pass (see ADR-004 for the ClickHouse
+      dedicated-user fix needed to get there)
 
-### Phase 1 — Next
-- [ ] `src/extract/tasktracker.py` — JWT login via Airflow Connection,
+### Phase 1 — In progress
+- [x] `src/extract/tasktracker.py` — JWT login via Airflow Connection,
       paginated pull of `/api/tasks/` + `/api/projects/`, write parquet
+      (tested end-to-end with mocked HTTP, see `tests/test_extract_tasktracker.py`)
 - [ ] `src/transform/pandas_ops.py` — daily/per-project/per-status
       aggregates
 - [ ] `src/load/clickhouse_loader.py` — `raw_tasks` + `daily_task_stats`
@@ -51,8 +55,8 @@ See `docs/architecture.md` for the full picture. Short version:
       `sync_tasktracker_to_clickhouse` DAG calling into `src/`
 
 ### Phase 2 — Not started
-- [ ] Tests for extractor (mocked HTTP) and transform (sample -> expected
-      aggregates)
+- [ ] Tests for transform (sample -> expected aggregates) and load
+      (mocked/local ClickHouse)
 - [ ] CI (GitHub Actions): ruff, DAG-import test, ClickHouse service
       container
 

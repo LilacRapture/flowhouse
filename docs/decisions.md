@@ -207,6 +207,39 @@ was an avoidable source of silent data corruption for nullable fields
 
 ---
 
+## ADR-007 — MagicMock for requests.Session in extractor tests (exception to fake-object preference)
+
+**Date:** Phase 1
+**Status:** Accepted
+
+**Decision:** `tests/test_extract_tasktracker.py` mocks `requests.Session`
+with `unittest.mock.MagicMock`, not a hand-written fake session object.
+The Airflow `Connection` object it also depends on IS faked (`FakeConn`).
+
+**Context:** The project convention (established in TaskTracker/petrag)
+prefers concrete fakes over `MagicMock`. `requests.Session` here is used
+through exactly two thin calls (`.post(...).json()`, `.get(...).json()`)
+plus attribute assignment (`session.headers[...] = ...`) — there's no
+meaningful behavior to fake beyond "return this canned response," and
+`MagicMock`'s `assert_called_once_with(...)` already gives a stricter
+call-shape check than a hand-rolled fake would for free.
+
+**Alternatives considered:**
+- A `_FakeSession` class with a queue of canned responses (mirroring
+  `FakeConn`) — fully consistent with the stated convention, but adds
+  boilerplate for an object with no real logic to fake; the convention's
+  underlying goal (avoid `MagicMock`'s silent-typo/over-permissive
+  interface) isn't really at stake for a 2-method HTTP client shim.
+
+**Consequences:**
+- This is a deliberate, narrow exception — not a reopening of the
+  fake-vs-MagicMock question generally. New tests elsewhere in this
+  project (transform, load) should still default to concrete fakes
+  unless they hit the same "thin external HTTP/SDK client, no logic to
+  fake" shape as here.
+
+---
+
 ## Template for new ADRs
 
 ```
