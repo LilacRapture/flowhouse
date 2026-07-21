@@ -1,18 +1,24 @@
 """
-Loads daily_task_snapshot rows into ClickHouse.
+Loads transformed data into ClickHouse.
 
-Reload strategy: per-day partition refresh, not whole-table truncate.
-The table is partitioned by snapshot_date (one partition per day, see
-ADR-011), so a re-run for the same day (Airflow retry, manual backfill)
-drops just that day's partition before inserting — other days' data is
-untouched. This matches ADR-008's decision that daily_task_snapshot
-only accumulates forward and never rewrites other days.
+Two tables, two different reload strategies:
 
-Not atomic: DROP PARTITION and the subsequent insert are two separate
-statements (ClickHouse has no cross-statement transactions). If insert
-fails after a successful drop, that day's partition is left empty until
-the next successful run — acceptable here since Airflow's own retry
-mechanism is the natural recovery path for an idempotent per-day task.
+- raw_tasks: whole-table TRUNCATE + insert on every run; there is
+  no partition key to refresh selectively, since there's nothing to
+  preserve between runs by design.
+- daily_task_snapshot: per-day partition refresh — see ADR-011. Does NOT
+  use whole-table truncate, since that would erase previously
+  accumulated history (ADR-008).
+
+Nullable columns (raw_tasks.due_date, .project_id, .project_name):
+clickhouse-connect's write path checks `x is None` (and, for numeric
+types, `if x`) directly — pd.NaT/pd.NA/np.nan are NOT recognized as null
+and either silently produce a wrong (non-null) bit or crash outright.
+transform.pandas_ops.build_raw_tasks() already converts all missing
+values to literal None before handing off a DataFrame here — see
+ADR-012. Date/DateTime columns also require real date/datetime objects,
+not strings — clickhouse-connect calls (x - epoch).days / x.timestamp()
+directly on each value.
 """
 import logging
 import os
@@ -27,10 +33,11 @@ CLICKHOUSE_HTTP_PORT = int(os.environ.get("CLICKHOUSE_HTTP_PORT", "8123"))
 CLICKHOUSE_USER = os.environ.get("CLICKHOUSE_USER", "default")
 CLICKHOUSE_PASSWORD = os.environ.get("CLICKHOUSE_PASSWORD", "")
 
-TABLE_NAME = "daily_task_snapshot"
+DAILY_SNAPSHOT_TABLE = "daily_task_snapshot"
+RAW_TASKS_TABLE = "raw_tasks"
 
-_CREATE_TABLE_SQL = f"""
-CREATE TABLE IF NOT EXISTS {TABLE_NAME}
+_CREATE_DAILY_SNAPSHOT_SQL = f"""
+CREATE TABLE IF NOT EXISTS {DAILY_SNAPSHOT_TABLE}
 (
     snapshot_date   Date,
     project_id      UInt64,
@@ -46,6 +53,25 @@ PARTITION BY snapshot_date
 ORDER BY (snapshot_date, project_id, owner_id, status)
 """
 
+_CREATE_RAW_TASKS_SQL = f"""
+CREATE TABLE IF NOT EXISTS {RAW_TASKS_TABLE}
+(
+    id             UInt64,
+    title          String,
+    description    String,
+    status         LowCardinality(String),
+    due_date       Nullable(Date),
+    owner_id       UInt64,
+    owner_email    String,
+    project_id     Nullable(UInt64),
+    project_name   Nullable(String),
+    created_at     DateTime,
+    updated_at     DateTime
+)
+ENGINE = MergeTree
+ORDER BY id
+"""
+
 
 def get_client():
     return clickhouse_connect.get_client(
@@ -56,8 +82,12 @@ def get_client():
     )
 
 
-def ensure_table(client) -> None:
-    client.command(_CREATE_TABLE_SQL)
+def ensure_daily_snapshot_table(client) -> None:
+    client.command(_CREATE_DAILY_SNAPSHOT_SQL)
+
+
+def ensure_raw_tasks_table(client) -> None:
+    client.command(_CREATE_RAW_TASKS_SQL)
 
 
 def _drop_partition(client, snapshot_date) -> None:
@@ -67,7 +97,7 @@ def _drop_partition(client, snapshot_date) -> None:
     day) — ClickHouse's DROP PARTITION does not error in that case.
     """
     client.command(
-        f"ALTER TABLE {TABLE_NAME} DROP PARTITION %(snapshot_date)s",
+        f"ALTER TABLE {DAILY_SNAPSHOT_TABLE} DROP PARTITION %(snapshot_date)s",
         parameters={"snapshot_date": snapshot_date},
     )
 
@@ -77,24 +107,43 @@ def load_daily_task_snapshot(client, df: pd.DataFrame, snapshot_date) -> None:
     Loads df (from transform.pandas_ops.build_daily_task_snapshot) into
     ClickHouse, refreshing only the partition for snapshot_date.
 
-    client is passed in explicitly (not created internally) — same
-    dependency-injection convention as petrag's ingestion/vector_store.py,
-    keeps this testable with a fake client and avoids opening a new
-    connection per call.
-
-    A no-op beyond ensure_table if df is empty — DROP PARTITION plus an
-    empty insert would be a wasted round-trip for a day where extract
-    legitimately found zero tasks.
+    A no-op beyond ensure_daily_snapshot_table if df is empty — DROP
+    PARTITION plus an empty insert would be a wasted round-trip for a
+    day where extract legitimately found zero tasks.
     """
-    ensure_table(client)
+    ensure_daily_snapshot_table(client)
 
     if df.empty:
         logger.info("No rows to load for snapshot_date=%s — skipping", snapshot_date)
         return
 
     _drop_partition(client, snapshot_date)
-    client.insert_df(TABLE_NAME, df)
+    client.insert_df(DAILY_SNAPSHOT_TABLE, df)
     logger.info(
-        "Loaded %d row(s) into %s for snapshot_date=%s", len(df), TABLE_NAME, snapshot_date
+        "Loaded %d row(s) into %s for snapshot_date=%s",
+        len(df), DAILY_SNAPSHOT_TABLE, snapshot_date,
     )
+
+
+def load_raw_tasks(client, df: pd.DataFrame) -> None:
+    """
+    Loads df (from transform.pandas_ops.build_raw_tasks) into ClickHouse,
+    replacing the entire table's contents — raw_tasks mirrors current
+    state only (variant A), there is no history to preserve between runs.
+
+    A no-op beyond ensure_raw_tasks_table if df is empty (extract found
+    zero tasks) — TRUNCATE still runs, since "TaskTracker currently has
+    no tasks" is itself a real state raw_tasks should reflect, not a
+    reason to leave stale rows in place.
+    """
+    ensure_raw_tasks_table(client)
+
+    client.command(f"TRUNCATE TABLE {RAW_TASKS_TABLE}")
+
+    if df.empty:
+        logger.info("No tasks to load — %s left empty", RAW_TASKS_TABLE)
+        return
+
+    client.insert_df(RAW_TASKS_TABLE, df)
+    logger.info("Loaded %d row(s) into %s", len(df), RAW_TASKS_TABLE)
     

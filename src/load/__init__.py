@@ -1,11 +1,10 @@
 """
 Loaders — write transformed data into ClickHouse.
 
-Reload strategy: per-day partition refresh, not whole-table truncate.
-daily_task_snapshot is partitioned by snapshot_date (one partition per
-day); a reload for a given day drops just that day's partition before
-inserting, leaving other days untouched — see clickhouse_loader.py and
-ADR-011. This supersedes the original "full refresh (truncate + insert)"
-placeholder plan, which predated ADR-008's snapshot-accumulates-forward
-decision and would have deleted all prior history on every run.
+Two tables, two reload strategies (see clickhouse_loader.py docstring
+for details):
+- raw_tasks: whole-table TRUNCATE + insert, mirrors current TaskTracker
+  state only (variant A — no history).
+- daily_task_snapshot: per-day partition refresh, accumulates forward
+  (ADR-008, ADR-011) — never a whole-table truncate.
 """

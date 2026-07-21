@@ -3,12 +3,14 @@ Tests for src/load/clickhouse_loader.py using a concrete fake client
 (_FakeClickHouseClient), not MagicMock — consistent with project test
 philosophy. No real ClickHouse instance involved.
 """
+from datetime import date
+
 import pandas as pd
 
 from src.load.clickhouse_loader import (
-    _CREATE_TABLE_SQL,
-    TABLE_NAME,
-    ensure_table,
+    _CREATE_DAILY_SNAPSHOT_SQL,
+    DAILY_SNAPSHOT_TABLE,
+    ensure_daily_snapshot_table,
     load_daily_task_snapshot,
 )
 
@@ -30,7 +32,7 @@ class _FakeClickHouseClient:
 def _sample_df() -> pd.DataFrame:
     return pd.DataFrame(
         {
-            "snapshot_date": [__import__("datetime").date(2026, 7, 15)],
+            "snapshot_date": [date(2026, 7, 15)],
             "project_id": [7],
             "project_name": ["Real Project"],
             "owner_id": [1],
@@ -48,19 +50,14 @@ def _sample_df() -> pd.DataFrame:
 
 def test_ensure_table_runs_create_table_sql():
     client = _FakeClickHouseClient()
-    ensure_table(client)
-
+    ensure_daily_snapshot_table(client)
     assert len(client.commands) == 1
     cmd, params = client.commands[0]
-    assert cmd == _CREATE_TABLE_SQL
+    assert cmd == _CREATE_DAILY_SNAPSHOT_SQL
     assert params is None
 
 
-# ---------------------------------------------------------------------------
-# load_daily_task_snapshot — empty DataFrame
-# ---------------------------------------------------------------------------
-
-def test_load_with_empty_dataframe_only_ensures_table(tmp_path):
+def test_load_with_empty_dataframe_only_ensures_table():
     client = _FakeClickHouseClient()
     empty_df = pd.DataFrame(
         columns=[
@@ -68,10 +65,8 @@ def test_load_with_empty_dataframe_only_ensures_table(tmp_path):
             "owner_id", "owner_email", "status", "task_count", "overdue_count",
         ]
     )
-
     load_daily_task_snapshot(client, empty_df, "2026-07-15")
-
-    assert len(client.commands) == 1  # only the CREATE TABLE
+    assert len(client.commands) == 1
     assert client.inserted == []
 
 
@@ -89,7 +84,7 @@ def test_load_creates_table_then_drops_partition_then_inserts():
     create_cmd, create_params = client.commands[0]
     drop_cmd, drop_params = client.commands[1]
 
-    assert create_cmd == _CREATE_TABLE_SQL
+    assert create_cmd == _CREATE_DAILY_SNAPSHOT_SQL
     assert "DROP PARTITION" in drop_cmd
     assert drop_params == {"snapshot_date": df["snapshot_date"][0]}
 
@@ -102,20 +97,97 @@ def test_load_inserts_the_given_dataframe_into_the_right_table():
 
     assert len(client.inserted) == 1
     table, inserted_df = client.inserted[0]
-    assert table == TABLE_NAME
+    assert table == DAILY_SNAPSHOT_TABLE
     assert inserted_df is df
 
 
-def test_load_drop_partition_happens_before_insert():
+def test_load_does_not_insert_when_dataframe_empty():
     client = _FakeClickHouseClient()
-    df = _sample_df()
+    empty_df = pd.DataFrame(
+        columns=[
+            "snapshot_date", "project_id", "project_name",
+            "owner_id", "owner_email", "status", "task_count", "overdue_count",
+        ]
+    )
+    load_daily_task_snapshot(client, empty_df, "2026-07-15")
+    assert client.inserted == []
 
-    load_daily_task_snapshot(client, df, df["snapshot_date"][0])
 
-    # commands[1] is the DROP PARTITION call; inserted must happen after —
-    # can't compare timestamps directly, but the fake only has two lists,
-    # so we rely on the function's own internal ordering being exercised
-    # by test_load_creates_table_then_drops_partition_then_inserts above,
-    # and confirm here that insert wasn't skipped/duplicated.
+# ---------------------------------------------------------------------------
+# load_raw_tasks
+# ---------------------------------------------------------------------------
+
+from src.load.clickhouse_loader import (  # noqa: E402
+    _CREATE_RAW_TASKS_SQL,
+    RAW_TASKS_TABLE,
+    ensure_raw_tasks_table,
+    load_raw_tasks,
+)
+
+
+def _sample_raw_tasks_df() -> pd.DataFrame:
+    return pd.DataFrame(
+        {
+            "id": [1],
+            "title": ["Task A"],
+            "description": [""],
+            "status": ["todo"],
+            "due_date": [date(2026, 7, 1)],
+            "owner_id": [1],
+            "owner_email": ["a@example.com"],
+            "project_id": [None],
+            "project_name": [None],
+            "created_at": [pd.Timestamp("2026-06-01T10:00:00Z")],
+            "updated_at": [pd.Timestamp("2026-06-01T10:00:00Z")],
+        }
+    )
+
+
+def test_ensure_raw_tasks_table_runs_create_table_sql():
+    client = _FakeClickHouseClient()
+    ensure_raw_tasks_table(client)
+    assert len(client.commands) == 1
+    cmd, params = client.commands[0]
+    assert cmd == _CREATE_RAW_TASKS_SQL
+    assert params is None
+
+
+def test_load_raw_tasks_creates_table_then_truncates_then_inserts():
+    client = _FakeClickHouseClient()
+    df = _sample_raw_tasks_df()
+
+    load_raw_tasks(client, df)
+
+    assert len(client.commands) == 2
+    create_cmd, _ = client.commands[0]
+    truncate_cmd, _ = client.commands[1]
+    assert create_cmd == _CREATE_RAW_TASKS_SQL
+    assert "TRUNCATE TABLE" in truncate_cmd
+    assert RAW_TASKS_TABLE in truncate_cmd
+
+
+def test_load_raw_tasks_inserts_into_the_right_table():
+    client = _FakeClickHouseClient()
+    df = _sample_raw_tasks_df()
+
+    load_raw_tasks(client, df)
+
     assert len(client.inserted) == 1
-    
+    table, inserted_df = client.inserted[0]
+    assert table == RAW_TASKS_TABLE
+    assert inserted_df is df
+
+
+def test_load_raw_tasks_truncates_even_when_dataframe_empty():
+    """
+    Unlike load_daily_task_snapshot, an empty raw_tasks load still
+    truncates — "TaskTracker currently has zero tasks" is a real state
+    to reflect, not a reason to leave stale rows.
+    """
+    client = _FakeClickHouseClient()
+    empty_df = pd.DataFrame(columns=list(_sample_raw_tasks_df().columns))
+
+    load_raw_tasks(client, empty_df)
+
+    assert len(client.commands) == 2  # CREATE + TRUNCATE still both ran
+    assert client.inserted == []

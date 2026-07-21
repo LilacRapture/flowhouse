@@ -408,6 +408,60 @@ days.
 
 ---
 
+## ADR-012 — Nullable ClickHouse columns require literal None, not pd.NA/NaT/NaN
+
+**Date:** Phase 1
+**Status:** Accepted
+
+**Decision:** Every value handed to clickhouse-connect for a Nullable
+column (or a Date/DateTime column) must be a real Python `None` for
+missing values, and a real `datetime.date`/`datetime`/`pd.Timestamp` for
+present ones — never `pd.NA`, `pd.NaT`, or `np.nan`.
+`transform.pandas_ops.build_raw_tasks()` and `_flatten_tasks()` convert
+explicitly at the DataFrame-construction step, not at load time.
+
+**Context:** Verified directly against clickhouse-connect 0.7.19's
+source across three type families:
+- `datatypes/base.py`'s null bitmap: `bytes([1 if x is None else 0 for x
+  in column])` — an `is None` identity check, nothing else.
+- `datatypes/temporal.py`'s `Date`/`DateTime` write paths: `(x -
+  epoch).days` / `x.timestamp()` called directly on each value; a
+  string, `pd.NaT`, or `np.nan` either crashes or (worse) is silently
+  treated as non-null by the bitmap check while still crashing on the
+  arithmetic.
+- `datatypes/numeric.py`'s nullable numeric write path: `if x: ... else:
+  empty bytes` — same "only real None is null" semantics.
+
+Empirically confirmed the specific failure: `pd.to_datetime(due_date_str
+).dt.date` — the natural way to get a date column from strings — turns a
+missing value into `pd.NaT`, not `None`. `1 if x is None else 0` on that
+column returns `0` (non-null) for the `NaT` entry, and the subsequent
+`(x - epoch).days` then raises `TypeError`. Separately, building
+`project_id` via `.apply(lambda t: t[0])` on a mix of int + None
+upcasts the whole column to `float64` — the same class of bug as
+ADR-006/009, this time introduced by our own `_flatten_tasks`, not by a
+library.
+
+**Consequences:**
+- `_clean_nullable_date_column()` explicitly replaces `pd.isna()` values
+  with literal `None` after `pd.to_datetime(...).dt.date`.
+- `_extract_project_fields_nullable()` returns `(None, None)`, not a
+  sentinel, for `raw_tasks` (contrast with `daily_task_snapshot`'s
+  sentinel — see ADR-008 discussion — which needs no such handling since
+  it has no Nullable columns at all).
+- `_flatten_tasks()`'s `project_id` column is built via an explicit
+  `pd.Series(..., dtype="object")` constructor, not bare `.apply()`, to
+  prevent pandas' own int+None-to-float64 inference.
+- General project takeaway (reinforces ADR-006/009/010): any time a
+  pandas column crosses into clickhouse-connect, check what Python type
+  each *value* actually is, not just what the column's *dtype* claims —
+  pandas' own missing-value representations (`NaT`, `NaN`, `pd.NA`) are
+  themselves the recurring source of bugs here, not clickhouse-connect's
+  behavior, which is simple and consistent (`is None`) once you know to
+  target it explicitly.
+
+---
+
 ## Template for new ADRs
 
 ```

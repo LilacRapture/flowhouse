@@ -40,14 +40,24 @@ def _extract_project_fields(project) -> tuple[int, str]:
     return project["id"], project["name"]
 
 
-def _flatten_tasks(tasks_df: pd.DataFrame) -> pd.DataFrame:
+def _flatten_tasks(tasks_df: pd.DataFrame, project_field_extractor=_extract_project_fields) -> pd.DataFrame:
+    """
+    project_id is built with an explicit dtype="object" Series
+    constructor, not bare .apply(lambda t: t[0]) — when the extractor can
+    return None (the nullable variant used by build_raw_tasks), plain
+    .apply() lets pandas infer a Series dtype from the values, and a
+    mix of int + None upcasts to float64 + NaN (the same class of bug
+    as ADR-006/009, reproduced here in our own code rather than in a
+    library). Forcing dtype="object" keeps real ints and real None
+    intact. owner_id needs no such handling — owner is never missing.
+    """
     owner_fields = tasks_df["owner"].apply(_extract_owner_fields)
-    project_fields = tasks_df["project"].apply(_extract_project_fields)
+    project_fields = tasks_df["project"].apply(project_field_extractor)
 
     flat = tasks_df.copy()
     flat["owner_id"] = owner_fields.apply(lambda t: t[0])
     flat["owner_email"] = owner_fields.apply(lambda t: t[1])
-    flat["project_id"] = project_fields.apply(lambda t: t[0])
+    flat["project_id"] = pd.Series([t[0] for t in project_fields], index=flat.index, dtype="object")
     flat["project_name"] = project_fields.apply(lambda t: t[1])
 
     return flat
@@ -73,4 +83,62 @@ def build_daily_task_snapshot(tasks_path: str, snapshot_date: str) -> pd.DataFra
     grouped.insert(0, "snapshot_date", snapshot_ts.date())
 
     return grouped[_OUTPUT_COLUMNS]
+
+
+_RAW_TASKS_COLUMNS = [
+    "id", "title", "description", "status", "due_date",
+    "owner_id", "owner_email", "project_id", "project_name",
+    "created_at", "updated_at",
+]
+
+
+def _extract_project_fields_nullable(project):
+    """
+    Like _extract_project_fields, but returns literal None instead of a
+    sentinel — for raw_tasks, which mirrors the source faithfully (see
+    ADR-012 on why Nullable columns require real None, not pd.NA).
+    """
+    if not isinstance(project, dict):
+        return None, None
+    return project["id"], project["name"]
+
+
+def _clean_nullable_date_column(series: pd.Series) -> list:
+    """
+    Converts a string date column to real datetime.date values, with
+    missing entries as literal None — clickhouse-connect's Nullable(Date)
+    write path checks `x is None` explicitly; pd.NaT (what
+    pd.to_datetime(...).dt.date naturally produces for missing values)
+    is not recognized as null and crashes the write. See ADR-012.
+    """
+    parsed = pd.to_datetime(series).dt.date
+    return [None if pd.isna(v) else v for v in parsed]
+
+
+def build_raw_tasks(tasks_path: str) -> pd.DataFrame:
+    """
+    Reads extract's raw tasks parquet and returns one row per task,
+    mirroring the source with minimal transformation (flattened
+    owner/project, due_date as a real date-or-None, created_at/updated_at
+    as real timestamps) — variant A: current state only, no history.
+    Loaded via clickhouse_loader.load_raw_tasks(), which truncates the
+    whole table before inserting.
+
+    created_at/updated_at are parsed with pd.to_datetime() — clickhouse-
+    connect's DateTime write path calls x.timestamp() on each value, which
+    a raw string does not support (pd.Timestamp does). Both fields are
+    always present (TaskTracker's auto_now_add/auto_now), so no null
+    handling is needed here, unlike due_date/project.
+    """
+    tasks_df = pd.read_parquet(tasks_path, dtype_backend="pyarrow")
+
+    if tasks_df.empty:
+        return pd.DataFrame(columns=_RAW_TASKS_COLUMNS)
+
+    flat = _flatten_tasks(tasks_df, project_field_extractor=_extract_project_fields_nullable)
+    flat["due_date"] = _clean_nullable_date_column(flat["due_date"])
+    flat["created_at"] = pd.to_datetime(flat["created_at"])
+    flat["updated_at"] = pd.to_datetime(flat["updated_at"])
+
+    return flat[_RAW_TASKS_COLUMNS].copy()
     
