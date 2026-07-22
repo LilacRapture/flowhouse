@@ -494,6 +494,42 @@ an accidental leftover.
 
 ---
 
+## ADR-014 — Pre-create data volume mount path in Dockerfile, not entrypoint.sh
+
+**Date:** Phase 1
+**Status:** Accepted
+
+**Decision:** `Dockerfile` adds `RUN mkdir -p /opt/airflow/data/raw`
+after installing dependencies, rather than adding a custom
+`entrypoint.sh` that chowns the volume at every container start.
+
+**Context:** `extract_tasks_task`'s `os.makedirs(DATA_DIR, exist_ok=True)`
+hit `PermissionError: [Errno 13] Permission denied` against the
+`airflow_data` named volume on a fresh environment — the volume was
+created with root ownership (Docker's default for a fresh named volume
+with no prior content at its mount path), while the container runs as
+the non-root `airflow` user (inherited from the base
+`apache/airflow` image).
+
+**Alternatives considered:**
+- Custom `entrypoint.sh` running `chown -R airflow: /opt/airflow/data`
+  before `exec`ing the real command (mirrors TaskTracker's
+  `entrypoint.sh` pattern) — works, but re-runs on every single
+  container start for a problem that only exists once, at first volume
+  creation; also requires starting as root and dropping privileges,
+  logic the base Airflow image already handles internally and that a
+  custom entrypoint risks conflicting with.
+
+**Consequences:**
+- Relies on Docker's documented behavior of copying an image's existing
+  content and ownership into a freshly created named volume on first
+  mount — not something exercised by this project's own test suite
+- Local environments that already hit this error (volume already
+  root-owned) still need the one-time manual fix:
+  `docker compose exec --user root airflow chown -R airflow: /opt/airflow/data`
+
+---
+
 ## Template for new ADRs
 
 ```

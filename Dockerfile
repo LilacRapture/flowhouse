@@ -8,5 +8,9 @@ FROM apache/airflow:2.9.3-python3.12
 COPY requirements.txt /requirements.txt
 RUN pip install --no-cache-dir -r /requirements.txt
 
-# dags/, src/, tests/ are bind-mounted at runtime (see docker-compose.yml
-# and ADR-003), so nothing else is COPYed here for local dev.
+# Pre-create the data volume mount path with correct ownership before the
+# named volume (airflow_data, see docker-compose.yml) is ever attached —
+# Docker copies an image's existing content+ownership into a freshly
+# created named volume on first mount, so this avoids the airflow user
+# (non-root) hitting PermissionError on os.makedirs() at runtime.
+RUN mkdir -p /opt/airflow/data/raw

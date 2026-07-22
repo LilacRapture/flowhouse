@@ -22,13 +22,13 @@ from datetime import datetime, timedelta
 import pandas as pd
 from airflow.decorators import dag, task
 
-from src.extract.tasktracker import extract_tasks
-from src.load.clickhouse_loader import (
+from extract.tasktracker import extract_tasks
+from load.clickhouse_loader import (
     get_client,
     load_daily_task_snapshot,
     load_raw_tasks,
 )
-from src.transform.pandas_ops import build_daily_task_snapshot, build_raw_tasks
+from transform.pandas_ops import build_daily_task_snapshot, build_raw_tasks
 
 logger = logging.getLogger(__name__)
 
