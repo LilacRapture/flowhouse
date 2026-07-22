@@ -462,6 +462,38 @@ library.
 
 ---
 
+## ADR-013 — Keep health_check.py
+
+**Date:** Phase 1
+**Status:** Accepted
+
+**Decision:** `health_check.py` remains as a separate, permanent
+diagnostic DAG alongside `sync_tasktracker_to_clickhouse.py`, rather
+than being deleted/replaced as originally planned.
+
+**Context:** health_check.py's own docstring and AGENTS.md both state
+it as "the scaffold that Phase 1's real sync_tasktracker_to_clickhouse
+DAG will replace." Revisited that plan once the real DAG existed: a
+connectivity-only check (is TaskTracker's API reachable, is ClickHouse
+reachable) answers a genuinely different question than the full ETL
+DAG, and answers it faster and with no side effects — the full DAG's
+extract/load tasks failing don't distinguish "host unreachable" from
+"reachable but auth failed" or "reachable but a real data/transform
+bug," whereas health_check.py isolates exactly the connectivity
+question. This is common practice in real Airflow projects (a
+lightweight ops/diagnostic DAG alongside the substantive pipeline), not
+an accidental leftover.
+
+**Consequences:**
+- AGENTS.md's Phase 1 checklist item "Replace health_check.py's inline
+  functions with a real sync_tasktracker_to_clickhouse DAG" is
+  reworded — sync_tasktracker_to_clickhouse.py is added as a new DAG,
+  health_check.py is kept, not replaced.
+- health_check.py's own docstring updated to drop the "will be
+  replaced" language, since it no longer will be.
+
+---
+
 ## Template for new ADRs
 
 ```

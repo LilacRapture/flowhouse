@@ -1,15 +1,13 @@
 """
 Skeleton DAG for the TaskTracker -> ClickHouse ETL pipeline.
 
-This DAG does NOT extract/transform/load any real data yet — it only
+This DAG does not extract/transform/load any real data — it only
 confirms that both external dependencies (TaskTracker's API, ClickHouse)
-are reachable from inside the Airflow container. It's the scaffold that
-Phase 1's real `sync_tasktracker_to_clickhouse` DAG will replace.
-
-Kept intentionally thin: task logic lives in module-level functions here
-only because there isn't a real `src/extract` / `src/load` module to call
-into yet. Once Phase 1 starts, this file should import from `src/` instead
-of defining logic inline (see AGENTS.md).
+are reachable from inside the Airflow container. Kept as a permanent,
+lightweight diagnostic DAG alongside sync_tasktracker_to_clickhouse.py
+(see ADR-013) — it answers "is anything even reachable?" faster and
+with no side effects, distinct from the full pipeline's own failure
+modes.
 """
 import logging
 import os

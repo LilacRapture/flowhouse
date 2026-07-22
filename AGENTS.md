@@ -43,7 +43,7 @@ See `docs/architecture.md` for the full picture. Short version:
       `check_clickhouse` pass (see ADR-004 for the ClickHouse
       dedicated-user fix needed to get there)
 
-### Phase 1 — In progress
+### Phase 1 — Done
 - [x] `src/extract/tasktracker.py` — JWT login via Airflow Connection,
       paginated pull of `/api/tasks/` + `/api/projects/`, write parquet
       (tested end-to-end with mocked HTTP, see `tests/test_extract_tasktracker.py`)
@@ -53,8 +53,12 @@ See `docs/architecture.md` for the full picture. Short version:
       (MergeTree, whole-table TRUNCATE+insert, mirrors current state)
       and `daily_task_snapshot` (MergeTree, PARTITION BY snapshot_date,
       per-day partition refresh)
-- [ ] Replace `health_check.py`'s inline functions with a real
-      `sync_tasktracker_to_clickhouse` DAG calling into `src/`
+- [x] `dags/sync_tasktracker_to_clickhouse.py` — 5-task DAG (extract →
+      [transform_snapshot → load_snapshot, transform_raw → load_raw]).
+      `health_check.py` kept as a separate diagnostic DAG, not replaced
+      — see ADR-013. `extract_projects()` exists and is tested but not
+      called from this DAG — project data arrives nested in each task,
+      a separate projects.parquet is currently unused
 
 ### Phase 2 — Not started
 - [ ] Tests for transform (sample -> expected aggregates) and load
