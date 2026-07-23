@@ -11,15 +11,14 @@ import pyarrow.parquet as pq
 
 from src.load.clickhouse_loader import (
     _CREATE_DAILY_SNAPSHOT_SQL,
-    DAILY_SNAPSHOT_TABLE,
-    ensure_daily_snapshot_table,
-    load_daily_task_snapshot,
-
     _CREATE_RAW_TASKS_SQL,
+    DAILY_SNAPSHOT_TABLE,
     RAW_TASKS_TABLE,
-    ensure_raw_tasks_table,
-    load_raw_tasks,
     _normalize_nullable_columns,
+    ensure_daily_snapshot_table,
+    ensure_raw_tasks_table,
+    load_daily_task_snapshot,
+    load_raw_tasks,
 )
 
 
