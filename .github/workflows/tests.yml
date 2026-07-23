@@ -19,6 +19,8 @@ jobs:
           CLICKHOUSE_USER: flowhouse
           CLICKHOUSE_PASSWORD: flowhouse
           CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: "1"
+          AIRFLOW_HOME: ${{ github.workspace }}/.airflow_home
+          PYTHONPATH: ${{ github.workspace }}/src
         ports:
           - 8123:8123
         options: >-
