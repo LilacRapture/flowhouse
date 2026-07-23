@@ -7,16 +7,20 @@ inside the Airflow container, same as test_health_check_dag.py:
 extract_tasks_task/load_snapshot_task/load_raw_task themselves need a
 live Airflow Connection (tasktracker_api) and a reachable ClickHouse.
 """
+import os
+
 from airflow.models import DagBag
+
+DAGS_FOLDER = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "dags")
 
 
 def test_dagbag_imports_without_errors():
-    dagbag = DagBag(dag_folder="/opt/airflow/dags", include_examples=False)
+    dagbag = DagBag(dag_folder=DAGS_FOLDER, include_examples=False)
     assert dagbag.import_errors == {}
 
 
 def test_sync_dag_loaded_with_expected_tasks():
-    dagbag = DagBag(dag_folder="/opt/airflow/dags", include_examples=False)
+    dagbag = DagBag(dag_folder=DAGS_FOLDER, include_examples=False)
     dag = dagbag.get_dag("sync_tasktracker_to_clickhouse")
 
     assert dag is not None
@@ -30,7 +34,7 @@ def test_sync_dag_loaded_with_expected_tasks():
 
 
 def test_extract_fans_out_to_both_transform_tasks():
-    dagbag = DagBag(dag_folder="/opt/airflow/dags", include_examples=False)
+    dagbag = DagBag(dag_folder=DAGS_FOLDER, include_examples=False)
     dag = dagbag.get_dag("sync_tasktracker_to_clickhouse")
 
     extract = dag.get_task("extract_tasks_task")
@@ -39,7 +43,7 @@ def test_extract_fans_out_to_both_transform_tasks():
 
 
 def test_transform_snapshot_leads_only_to_load_snapshot():
-    dagbag = DagBag(dag_folder="/opt/airflow/dags", include_examples=False)
+    dagbag = DagBag(dag_folder=DAGS_FOLDER, include_examples=False)
     dag = dagbag.get_dag("sync_tasktracker_to_clickhouse")
 
     transform_snapshot = dag.get_task("transform_snapshot_task")
@@ -47,8 +51,9 @@ def test_transform_snapshot_leads_only_to_load_snapshot():
 
 
 def test_transform_raw_leads_only_to_load_raw():
-    dagbag = DagBag(dag_folder="/opt/airflow/dags", include_examples=False)
+    dagbag = DagBag(dag_folder=DAGS_FOLDER, include_examples=False)
     dag = dagbag.get_dag("sync_tasktracker_to_clickhouse")
 
     transform_raw = dag.get_task("transform_raw_task")
     assert [t.task_id for t in transform_raw.downstream_list] == ["load_raw_task"]
+    
