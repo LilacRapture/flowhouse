@@ -1,0 +1,59 @@
+name: Tests
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    services:
+      clickhouse:
+        image: clickhouse/clickhouse-server:24.8
+        env:
+          # Dedicated user, not `default` — the image
+          # disables `default`'s network access unless one of these is set.
+          CLICKHOUSE_DB: flowhouse
+          CLICKHOUSE_USER: flowhouse
+          CLICKHOUSE_PASSWORD: flowhouse
+          CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: "1"
+        ports:
+          - 8123:8123
+        options: >-
+          --health-cmd "wget --spider -q http://localhost:8123/ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      CLICKHOUSE_HOST: localhost
+      CLICKHOUSE_HTTP_PORT: "8123"
+      CLICKHOUSE_USER: flowhouse
+      CLICKHOUSE_PASSWORD: flowhouse
+      AIRFLOW_HOME: ${{ github.workspace }}/.airflow_home
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install -r requirements-test.txt \
+            --constraint "https://raw.githubusercontent.com/apache/airflow/constraints-2.9.3/constraints-3.12.txt"
+
+      - name: Lint with ruff
+        run: ruff check .
+
+      - name: Initialize Airflow metadata DB
+        run: airflow db migrate
+
+      - name: Run tests
+        run: pytest -v

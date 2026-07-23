@@ -36,6 +36,8 @@ CLICKHOUSE_PASSWORD = os.environ.get("CLICKHOUSE_PASSWORD", "")
 DAILY_SNAPSHOT_TABLE = "daily_task_snapshot"
 RAW_TASKS_TABLE = "raw_tasks"
 
+_NULLABLE_RAW_TASKS_COLUMNS = ["due_date", "project_id", "project_name"]
+
 _CREATE_DAILY_SNAPSHOT_SQL = f"""
 CREATE TABLE IF NOT EXISTS {DAILY_SNAPSHOT_TABLE}
 (
@@ -125,11 +127,47 @@ def load_daily_task_snapshot(client, df: pd.DataFrame, snapshot_date) -> None:
     )
 
 
+def _normalize_nullable_columns(df: pd.DataFrame, columns: list[str]) -> pd.DataFrame:
+    """
+    Replaces pd.NA (or any pandas missing-value sentinel: pd.NaT, np.nan)
+    with literal None in the given columns.
+
+    Needed because the DAG's transform task writes build_raw_tasks()'s
+    output to an intermediate parquet file (per the project's
+    no-DataFrame-via-XCom convention) and the load task reads it back —
+    but pandas' own parquet write+read round-trip turns real None into
+    pd.NA. clickhouse-connect's Nullable-column write path only
+    recognizes literal `None` (see ADR-012); pd.NA is silently treated
+    as non-null rather than raising, which is the more dangerous failure
+    mode. Applied only to raw_tasks' three genuinely nullable columns,
+    not blindly to every column.
+
+    Built via an explicit dtype="object" Series constructor, not bare
+    Series.apply() — the same int-to-float upcast bug as ADR-012's
+    _flatten_tasks fix, in a new disguise: .apply() returning a mix of
+    int + None on an int64[pyarrow]-backed source column (project_id,
+    after the parquet round-trip) silently upcasts the whole result to
+    float64/NaN. date32[day][pyarrow]-backed columns (due_date) don't
+    hit this specific path, but forcing dtype="object" uniformly is
+    cheap and removes the need to reason about it per column.
+    """
+    df = df.copy()
+    for col in columns:
+        df[col] = pd.Series(
+            [None if pd.isna(v) else v for v in df[col]],
+            index=df.index,
+            dtype="object",
+        )
+    return df
+
+
 def load_raw_tasks(client, df: pd.DataFrame) -> None:
     """
-    Loads df (from transform.pandas_ops.build_raw_tasks) into ClickHouse,
-    replacing the entire table's contents — raw_tasks mirrors current
-    state only (variant A), there is no history to preserve between runs.
+    Loads df (from transform.pandas_ops.build_raw_tasks, typically
+    reconstituted from an intermediate parquet file — see
+    _normalize_nullable_columns) into ClickHouse, replacing the entire
+    table's contents — raw_tasks mirrors current state only,
+    there is no history to preserve between runs.
 
     A no-op beyond ensure_raw_tasks_table if df is empty (extract found
     zero tasks) — TRUNCATE still runs, since "TaskTracker currently has
@@ -144,6 +182,6 @@ def load_raw_tasks(client, df: pd.DataFrame) -> None:
         logger.info("No tasks to load — %s left empty", RAW_TASKS_TABLE)
         return
 
+    df = _normalize_nullable_columns(df, _NULLABLE_RAW_TASKS_COLUMNS)
     client.insert_df(RAW_TASKS_TABLE, df)
     logger.info("Loaded %d row(s) into %s", len(df), RAW_TASKS_TABLE)
-    

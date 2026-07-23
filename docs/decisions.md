@@ -530,6 +530,41 @@ the non-root `airflow` user (inherited from the base
 
 ---
 
+## ADR-015 — CI installs Airflow directly + ClickHouse service container (not a Docker build)
+
+**Date:** Phase 2
+**Status:** Accepted
+
+**Decision:** CI (`tests.yml`) installs `apache-airflow==2.9.3` directly
+via pip (constrained by Airflow's official constraints file) plus a
+`clickhouse/clickhouse-server` GitHub Actions service container —
+matching TaskTracker's and petrag's own CI style (direct pip install +
+service containers) — rather than building and running tests inside the
+project's actual Dockerfile/docker-compose stack.
+
+**Context:** `apache-airflow` is deliberately excluded from
+`requirements.txt` (see `tests/test_health_check_dag.py`,
+`tests/test_sync_dag.py` docstrings) to keep a plain local venv for
+linting/dev light. CI still needs it to run the DAG-import tests and the
+ClickHouse integration tests.
+
+**Alternatives considered:**
+- Build the real Docker image and run pytest inside a full
+  docker-compose stack in CI — more faithfully mirrors production, but
+  slower, more complex.
+
+**Consequences:**
+- New `requirements-test.txt`, installed alongside `requirements.txt`
+  only in CI (and locally, if someone wants to run the full suite
+  outside the Airflow container).
+- ClickHouse service container uses a dedicated `flowhouse` user (env
+  vars `CLICKHOUSE_USER`/`PASSWORD`/`DEFAULT_ACCESS_MANAGEMENT`).
+- `tests/test_clickhouse_integration.py` exercises real DDL and
+  `DROP PARTITION` behavior for the first time as an automated,
+  repeatable check.
+
+---
+
 ## Template for new ADRs
 
 ```

@@ -1,0 +1,9 @@
+# Dependencies needed only to run the test suite locally/in CI — kept
+# separate from requirements.txt so a plain venv for linting/dev work
+# doesn't pull in Airflow's fairly heavy dependency tree.
+#
+# Install with the official constraints file to match the exact
+# dependency set Airflow itself was tested against:
+#   pip install -r requirements.txt -r requirements-test.txt \
+#     --constraint "https://raw.githubusercontent.com/apache/airflow/constraints-2.9.3/constraints-3.12.txt"
+apache-airflow==2.9.3

@@ -5,6 +5,10 @@ requires-python = ">=3.12,<3.13"
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 python_files = ["test_*.py"]
+markers = [
+    "integration: needs a real ClickHouse instance (docker-compose or CI service container), not just a fake client",
+]
+addopts = "--strict-markers"
 
 [tool.ruff]
 line-length = 100

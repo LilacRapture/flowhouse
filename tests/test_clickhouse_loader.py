@@ -6,12 +6,20 @@ philosophy. No real ClickHouse instance involved.
 from datetime import date
 
 import pandas as pd
+import pyarrow as pa
+import pyarrow.parquet as pq
 
 from src.load.clickhouse_loader import (
     _CREATE_DAILY_SNAPSHOT_SQL,
     DAILY_SNAPSHOT_TABLE,
     ensure_daily_snapshot_table,
     load_daily_task_snapshot,
+
+    _CREATE_RAW_TASKS_SQL,
+    RAW_TASKS_TABLE,
+    ensure_raw_tasks_table,
+    load_raw_tasks,
+    _normalize_nullable_columns,
 )
 
 
@@ -117,14 +125,6 @@ def test_load_does_not_insert_when_dataframe_empty():
 # load_raw_tasks
 # ---------------------------------------------------------------------------
 
-from src.load.clickhouse_loader import (  # noqa: E402
-    _CREATE_RAW_TASKS_SQL,
-    RAW_TASKS_TABLE,
-    ensure_raw_tasks_table,
-    load_raw_tasks,
-)
-
-
 def _sample_raw_tasks_df() -> pd.DataFrame:
     return pd.DataFrame(
         {
@@ -175,7 +175,7 @@ def test_load_raw_tasks_inserts_into_the_right_table():
     assert len(client.inserted) == 1
     table, inserted_df = client.inserted[0]
     assert table == RAW_TASKS_TABLE
-    assert inserted_df is df
+    assert inserted_df["id"].tolist() == df["id"].tolist()
 
 
 def test_load_raw_tasks_truncates_even_when_dataframe_empty():
@@ -191,3 +191,66 @@ def test_load_raw_tasks_truncates_even_when_dataframe_empty():
 
     assert len(client.commands) == 2  # CREATE + TRUNCATE still both ran
     assert client.inserted == []
+
+# ---------------------------------------------------------------------------
+# _normalize_nullable_columns — regression for the transform->load parquet
+# round-trip (pd.NA reintroduced where build_raw_tasks() had real None)
+# ---------------------------------------------------------------------------
+
+def test_normalize_nullable_columns_converts_pd_na_to_none_without_upcasting():
+    """
+    Regression test: reproduces the exact parquet round-trip a DAG task
+    boundary performs (transform writes, load reads back), for both an
+    int64[pyarrow]-backed column (project_id) and a date-typed one
+    (due_date) — the two behaved differently under bare Series.apply(),
+    see the function's docstring.
+    """
+    df = pd.DataFrame(
+        {
+            "project_id": pd.Series([7, None], dtype="object"),
+            "due_date": pd.Series([date(2026, 7, 1), None], dtype="object"),
+        }
+    )
+    path_str = "/tmp/_normalize_test.parquet"
+    pq.write_table(pa.Table.from_pandas(df), path_str)
+    roundtripped = pd.read_parquet(path_str, dtype_backend="pyarrow")
+
+    fixed = _normalize_nullable_columns(roundtripped, ["project_id", "due_date"])
+
+    assert fixed["project_id"].tolist() == [7, None]
+    assert all(isinstance(v, int) or v is None for v in fixed["project_id"])
+    assert fixed["due_date"].tolist() == [date(2026, 7, 1), None]
+    assert all(isinstance(v, date) or v is None for v in fixed["due_date"])
+
+
+def test_load_raw_tasks_normalizes_pd_na_before_insert():
+    """
+    load_raw_tasks itself must apply the normalization — not just the
+    helper in isolation — so a caller handing it a freshly-read-from-
+    parquet DataFrame (the real DAG scenario) still inserts clean data.
+    """
+    df = pd.DataFrame(
+        {
+            "id": [1, 2],
+            "title": ["A", "B"],
+            "description": ["", ""],
+            "status": ["todo", "done"],
+            "due_date": pd.Series([date(2026, 7, 1), None], dtype="object"),
+            "owner_id": [1, 1],
+            "owner_email": ["a@example.com", "a@example.com"],
+            "project_id": pd.Series([7, None], dtype="object"),
+            "project_name": pd.Series(["Real Project", None], dtype="object"),
+            "created_at": [pd.Timestamp("2026-06-01T10:00:00Z")] * 2,
+            "updated_at": [pd.Timestamp("2026-06-01T10:00:00Z")] * 2,
+        }
+    )
+    path_str = "/tmp/_load_raw_tasks_roundtrip_test.parquet"
+    pq.write_table(pa.Table.from_pandas(df), path_str)
+    roundtripped = pd.read_parquet(path_str, dtype_backend="pyarrow")
+
+    client = _FakeClickHouseClient()
+    load_raw_tasks(client, roundtripped)
+
+    _, inserted_df = client.inserted[0]
+    assert inserted_df["project_id"].tolist() == [7, None]
+    assert inserted_df["due_date"].tolist() == [date(2026, 7, 1), None]

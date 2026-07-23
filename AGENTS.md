@@ -61,10 +61,15 @@ See `docs/architecture.md` for the full picture. Short version:
       a separate projects.parquet is currently unused
 
 ### Phase 2 — Not started
-- [ ] Tests for transform (sample -> expected aggregates) and load
-      (mocked/local ClickHouse)
-- [ ] CI (GitHub Actions): ruff, DAG-import test, ClickHouse service
-      container
+- [x] Tests for transform (sample -> expected aggregates) — 25 tests in
+       `tests/test_pandas_ops.py`
+  [x] Tests for load with a fake client — 15 tests in
+       `tests/test_clickhouse_loader.py`
+  [x] Tests for load against a REAL ClickHouse instance —
+       `tests/test_clickhouse_integration.py` (DDL validity, DROP
+       PARTITION reload/idempotency, whole-table replace for raw_tasks)
+  [x] CI (GitHub Actions): ruff, DAG-import test (part of the normal
+       pytest run), ClickHouse service container — see ADR-015
 
 ### Phase 3 — Not started
 - [ ] PySpark variant of the transform step (local `SparkSession`, no
