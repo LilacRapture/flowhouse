@@ -17,6 +17,7 @@ each task writes its output to the shared data volume and returns the
 path, per project convention (see AGENTS.md).
 """
 import logging
+import os
 from datetime import datetime, timedelta
 
 import pandas as pd
@@ -28,7 +29,14 @@ from load.clickhouse_loader import (
     load_daily_task_snapshot,
     load_raw_tasks,
 )
-from transform.pandas_ops import build_daily_task_snapshot, build_raw_tasks
+from transform.pandas_ops import build_daily_task_snapshot as _pandas_build_daily_task_snapshot
+from transform.pandas_ops import build_raw_tasks as _pandas_build_raw_tasks
+
+# Engine switch — "pandas" (default) or "spark".
+# Read once at DAG-parse time from TRANSFORM_ENGINE (docker-compose.yml
+# / .env), not a DAG param — changeable without editing/redeploying the
+# DAG file itself.
+TRANSFORM_ENGINE = os.environ.get("TRANSFORM_ENGINE", "pandas").lower()
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +45,35 @@ default_args = {
     "retries": 1,
     "retry_delay": timedelta(minutes=1),
 }
+
+
+def _build_daily_task_snapshot(tasks_parquet_path: str, snapshot_date) -> pd.DataFrame:
+    if TRANSFORM_ENGINE == "spark":
+        # Imported lazily, not at module top — avoids requiring a JVM
+        # at every DAG-file parse (Airflow's scheduler re-parses DAG
+        # files on an interval) when pandas is the selected engine.
+        from transform.spark_ops import build_daily_task_snapshot as _spark_build
+        from transform.spark_ops import get_spark
+
+        spark = get_spark()
+        try:
+            return _spark_build(spark, tasks_parquet_path, str(snapshot_date))
+        finally:
+            spark.stop()
+    return _pandas_build_daily_task_snapshot(tasks_parquet_path, snapshot_date)
+
+
+def _build_raw_tasks(tasks_parquet_path: str) -> pd.DataFrame:
+    if TRANSFORM_ENGINE == "spark":
+        from transform.spark_ops import build_raw_tasks as _spark_build
+        from transform.spark_ops import get_spark
+
+        spark = get_spark()
+        try:
+            return _spark_build(spark, tasks_parquet_path)
+        finally:
+            spark.stop()
+    return _pandas_build_raw_tasks(tasks_parquet_path)
 
 
 @dag(
@@ -56,10 +93,13 @@ def sync_tasktracker_to_clickhouse():
 
     @task
     def transform_snapshot_task(tasks_parquet_path: str, ds: str = None) -> str:
-        df = build_daily_task_snapshot(tasks_parquet_path, ds)
+        df = _build_daily_task_snapshot(tasks_parquet_path, ds)
         output_path = tasks_parquet_path.replace("tasks_", "daily_task_snapshot_")
         df.to_parquet(output_path)
-        logger.info("Wrote %d snapshot row(s) to %s", len(df), output_path)
+        logger.info(
+            "Wrote %d snapshot row(s) to %s (engine=%s)",
+            len(df), output_path, TRANSFORM_ENGINE,
+        )
         return output_path
 
     @task
@@ -70,10 +110,13 @@ def sync_tasktracker_to_clickhouse():
 
     @task
     def transform_raw_task(tasks_parquet_path: str) -> str:
-        df = build_raw_tasks(tasks_parquet_path)
+        df = _build_raw_tasks(tasks_parquet_path)
         output_path = tasks_parquet_path.replace("tasks_", "raw_tasks_")
         df.to_parquet(output_path)
-        logger.info("Wrote %d raw task row(s) to %s", len(df), output_path)
+        logger.info(
+            "Wrote %d raw task row(s) to %s (engine=%s)",
+            len(df), output_path, TRANSFORM_ENGINE,
+        )
         return output_path
 
     @task
