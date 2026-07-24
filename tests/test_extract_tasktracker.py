@@ -10,7 +10,15 @@ from unittest.mock import MagicMock
 import pyarrow as pa
 import pyarrow.parquet as pq
 
-from src.extract.tasktracker import _base_url, _fetch_all_pages, _login, _write_parquet
+from src.extract.tasktracker import (
+    _TASKS_ARROW_SCHEMA,
+    _base_url,
+    _fetch_all_pages,
+    _login,
+    _write_parquet,
+    extract_projects,
+    extract_tasks,
+)
 
 
 class FakeConn:
@@ -98,3 +106,98 @@ def test_write_parquet_keeps_nullable_int_as_int_not_float(tmp_path, monkeypatch
     assert table.schema.field("project_id").type == pa.int64()
     assert table.column("project_id").to_pylist() == [5, None]
     
+# ---------------------------------------------------------------------------
+# _write_parquet — explicit schema for tasks (ADR-018 regression tests)
+# ---------------------------------------------------------------------------
+
+def _all_none_project_records() -> list[dict]:
+    """
+    Two tasks where EVERY record has project=None — the exact shape
+    that triggers pyarrow's type-inference gap (ADR-018). A single
+    record wouldn't be enough to prove the point convincingly on its
+    own, but the bug already reproduces with just one; two is here
+    mainly for readability of "a batch", not a strict requirement.
+    """
+    base = {
+        "title": "Task", "description": "", "status": "todo", "due_date": None,
+        "owner": {"id": 1, "email": "a@example.com", "full_name": "A"},
+        "project": None,
+        "created_at": "2026-06-01T10:00:00Z", "updated_at": "2026-06-01T10:00:00Z",
+    }
+    return [{"id": 1, **base}, {"id": 2, **base}]
+
+
+def test_write_parquet_without_schema_infers_null_type_for_all_none_project(tmp_path, monkeypatch):
+    """
+    Documents WHY _TASKS_ARROW_SCHEMA exists: confirms the failure mode
+    is real pyarrow behavior, not a hypothetical — without an explicit
+    schema, a column where every value is None gets inferred as
+    pyarrow's `null` type, not struct<id, name>. This is what made
+    Spark's `F.col("project.id")` fail with "Can't extract a value from
+    project" (see tests/test_spark_ops.py, ADR-018).
+    """
+    monkeypatch.setattr("src.extract.tasktracker.DATA_DIR", str(tmp_path))
+
+    path = _write_parquet(_all_none_project_records(), "tasks")  # no schema
+    table = pq.read_table(path)
+
+    assert pa.types.is_null(table.schema.field("project").type)
+
+
+def test_write_parquet_with_explicit_schema_keeps_project_as_struct(tmp_path, monkeypatch):
+    """
+    The actual fix: passing _TASKS_ARROW_SCHEMA keeps `project` typed as
+    struct<id, name> even when every record's project is None.
+    """
+    monkeypatch.setattr("src.extract.tasktracker.DATA_DIR", str(tmp_path))
+
+    path = _write_parquet(_all_none_project_records(), "tasks", schema=_TASKS_ARROW_SCHEMA)
+    table = pq.read_table(path)
+
+    project_field = table.schema.field("project")
+    assert pa.types.is_struct(project_field.type)
+    assert [f.name for f in project_field.type] == ["id", "name"]
+
+
+def test_extract_tasks_always_passes_explicit_schema(monkeypatch):
+    """
+    Regression test for the actual production wiring, not just
+    _write_parquet's capability: extract_tasks() must itself pass
+    _TASKS_ARROW_SCHEMA to _extract_resource(). This is what would
+    catch someone accidentally dropping the schema= argument from
+    extract_tasks() in the future — test_write_parquet_with_explicit_
+    schema_keeps_project_as_struct above would keep passing even if
+    that happened, since it calls _write_parquet directly.
+    """
+    captured = {}
+
+    def _fake_extract_resource(resource, schema=None):
+        captured["resource"] = resource
+        captured["schema"] = schema
+        return "fake_path.parquet"
+
+    monkeypatch.setattr("src.extract.tasktracker._extract_resource", _fake_extract_resource)
+
+    extract_tasks()
+
+    assert captured["resource"] == "tasks"
+    assert captured["schema"] is _TASKS_ARROW_SCHEMA
+
+
+def test_extract_projects_does_not_pass_a_schema(monkeypatch):
+    """
+    extract_projects() is intentionally unaffected by ADR-018 — its
+    records are flat with no nested struct field that could collapse
+    to pyarrow's null type. Confirms the fix wasn't blanket-applied.
+    """
+    captured = {}
+
+    def _fake_extract_resource(resource, schema=None):
+        captured["schema"] = schema
+        return "fake_path.parquet"
+
+    monkeypatch.setattr("src.extract.tasktracker._extract_resource", _fake_extract_resource)
+
+    extract_projects()
+
+    assert captured["schema"] is None
