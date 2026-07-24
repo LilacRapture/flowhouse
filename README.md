@@ -1,4 +1,5 @@
 # flowhouse
+![Tests](https://github.com/<user>/flowhouse/actions/workflows/tests.yml/badge.svg)
 
 Batch ETL pipeline: TaskTracker's REST API → transform (pandas, later
 PySpark) → ClickHouse. Orchestrated by Apache Airflow.
