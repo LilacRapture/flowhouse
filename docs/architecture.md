@@ -39,31 +39,37 @@ etl-project/
 
 ## Current Status
 
-**Skeleton stage:** docker-compose + a placeholder `health_check` DAG that
-only confirms TaskTracker's API and ClickHouse are reachable from the
-Airflow container. No extract/transform/load logic exists yet — see
-AGENTS.md for the phase plan.
+**Phases 1–2 complete.** The real pipeline (`sync_tasktracker_to_clickhouse`
+DAG) extracts tasks from TaskTracker, transforms them with pandas into
+`raw_tasks` and `daily_task_snapshot` shapes, and loads both into
+ClickHouse — end-to-end, with unit tests, a ClickHouse integration test
+suite, and CI (ruff + pytest + a ClickHouse service container). The
+`health_check` DAG remains as a separate, permanent connectivity check.
 
-## Request Lifecycle (once Phase 1 lands)
+Phase 3 (a PySpark variant of the transform step) is next — see AGENTS.md.
+
+## Request Lifecycle
 
 ```
 Airflow scheduler triggers DAG (daily)
     │
     ▼
-extract_tasks / extract_projects (src/extract/tasktracker.py)
-    │   — paginated GET against TaskTracker's API, writes parquet to
-    │     a shared volume (not XCom — that's for small metadata only)
-    ▼
-transform_aggregate (src/transform/pandas_ops.py)
-    │   — cleans + aggregates into daily/per-project/per-status stats
-    ▼
-load_clickhouse (src/load/clickhouse_loader.py)
-    — truncate + insert into ClickHouse's daily_task_stats table
+extract_tasks_task (src/extract/tasktracker.py)
+    │   — paginated GET against TaskTracker's /api/tasks/, writes parquet
+    │     to a shared volume (not XCom). extract_projects() exists and is
+    │     tested but isn't called — project data already arrives nested
+    │     inside each task.
+    │
+    ├──► transform_snapshot_task → load_snapshot_task
+    │      (pandas_ops.build_daily_task_snapshot)
+    │      — per-day partition refresh into daily_task_snapshot (ADR-011)
+    │
+    └──► transform_raw_task → load_raw_task
+           (pandas_ops.build_raw_tasks)
+           — whole-table truncate + insert into raw_tasks
 ```
 
 ## Integration with TaskTracker
 
 TaskTracker runs in its own docker-compose stack, entirely independent of
-this one. The Airflow container reaches it via `host.docker.internal`,
-the same pattern petrag uses to reach Ollama on the host — see
-`docs/decisions.md` ADR-002.
+this one. The Airflow container reaches it via `host.docker.internal`.

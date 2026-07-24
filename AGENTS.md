@@ -60,7 +60,7 @@ See `docs/architecture.md` for the full picture. Short version:
       called from this DAG — project data arrives nested in each task,
       a separate projects.parquet is currently unused
 
-### Phase 2 — Not started
+### Phase 2 — Done
 - [x] Tests for transform (sample -> expected aggregates) — 25 tests in
        `tests/test_pandas_ops.py`
   [x] Tests for load with a fake client — 15 tests in

@@ -565,6 +565,87 @@ ClickHouse integration tests.
 
 ---
 
+## ADR-016 — PySpark as a parallel transform engine, selectable per run — not a replacement for pandas
+
+**Date:** Phase 3
+**Status:** Accepted
+
+**Decision:** Add `src/transform/spark_ops.py` as a second implementation
+of both `build_daily_task_snapshot()` and `build_raw_tasks()`, mirroring
+`pandas_ops.py`'s grouping logic, overdue definition, and output schema
+exactly. The DAG will select one engine or the other per run (mechanism
+TBD — see Consequences), not replace pandas_ops.py. Both functions are
+converted, not just one, so the choice stays symmetric across the two
+transform paths.
+
+**Context:** The goal is demonstrating engine choice, not
+retiring the working pandas implementation. Converting only one function
+would leave the pipeline permanently split (one branch always pandas,
+one always Spark) rather than offering a genuine either/or.
+
+**Alternatives considered:**
+- Convert only `build_raw_tasks` (simpler function, no aggregation) as a
+  single demonstration case — rejected: doesn't give a real "pick an
+  engine for this run" capability, only a permanently-mixed pipeline.
+- Two separate DAG files (`sync_..._pandas.py` / `sync_..._spark.py`) —
+  rejected in favor of a single DAG with an engine switch (see
+  Consequences), to avoid duplicating the DAG's task-dependency graph.
+
+**Consequences:**
+- `spark_ops.py`'s output is converted to pandas via `.toPandas()` before
+  reaching `src/load/clickhouse_loader.py`, which remains engine-agnostic
+  and only understands pandas DataFrames.
+- **Open risk, not yet verified:** Spark's `DateType`/`TimestampType`
+  columns may not convert to the same Python types
+  (`datetime.date`/`None`) that `clickhouse-connect` requires (ADR-009,
+  ADR-010, ADR-012 document the equivalent problem on the pandas/parquet
+  side). This must be verified with a dedicated test before Phase 3 is
+  considered complete — do not assume `.toPandas()` "just works" here.
+
+---
+
+## ADR-017 — Local SparkSession inside the Airflow container, no separate Spark cluster
+
+**Date:** Phase 3
+**Status:** Accepted
+
+**Decision:** `spark_ops.get_spark()` returns a local SparkSession
+(`master="local[2]"`) running inside the same Airflow container as
+`airflow standalone` (ADR-001) and `pandas_ops.py`. No separate
+Spark master/worker service is added to `docker-compose.yml`.
+
+**Context:** This ADR formalizes that choice against
+the alternative of a dedicated Spark cluster service.
+
+**Alternatives considered:**
+- Separate `spark-master`/`spark-worker` service(s) in `docker-compose.yml`
+  — a more realistic distributed-Spark setup, but disproportionate
+  infrastructure for this project's data volume (a handful of test
+  tasks).
+
+**Consequences:**
+- Requires a JRE in the Airflow image — `default-jdk-headless` added via
+  `Dockerfile` (`USER root` for `apt-get`, back to `USER airflow`
+  afterward).
+- `local[2]`, not `local[*]` — deliberately caps Spark's parallelism at 2
+  cores so it doesn't compete for all of the container's CPU with
+  `airflow standalone`'s webserver/scheduler/triggerer, which already run
+  in that same process/container per ADR-001.
+- `pyspark==3.5.3` pinned in `requirements.txt`, not the current PyPI
+  latest (4.2.0, released July 2026) — 4.x is a fresh major version with
+  an unverified compatibility surface for this project's specific
+  DataFrame operations (groupBy/agg/withColumn, struct-column handling);
+  3.5.x is the last release in the line already validated against
+  Python 3.12 by the wider community. Revisit once 4.x has more track
+  record, or if a specific 4.x feature becomes needed.
+- `JAVA_HOME=/usr/lib/jvm/default-java` set in the Dockerfile assumes
+  Debian's `default-jdk-headless` symlink convention — not yet verified
+  against the base image's actual filesystem; check with
+  `docker compose exec airflow readlink -f $(which java)` after the
+  first build and adjust if the path differs.
+
+---
+
 ## Template for new ADRs
 
 ```

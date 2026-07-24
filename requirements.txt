@@ -5,6 +5,11 @@ pandas==2.2.2
 pyarrow==17.0.0
 clickhouse-connect==0.7.19
 
+# PySpark: local-mode transform engine, parallel to
+# pandas_ops.py. Pinned to the 3.5.x line, not the current 4.2.0 latest
+# (see ADR-016 for why) — needs a JRE in the image, see Dockerfile.
+pyspark==3.5.3
+
 # Dev/lint (run outside the container too, e.g. in a local venv)
 ruff==0.6.9
 pytest==8.2.2
