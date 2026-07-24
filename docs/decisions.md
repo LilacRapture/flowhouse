@@ -592,15 +592,15 @@ one always Spark) rather than offering a genuine either/or.
   Consequences), to avoid duplicating the DAG's task-dependency graph.
 
 **Consequences:**
-- `spark_ops.py`'s output is converted to pandas via `.toPandas()` before
-  reaching `src/load/clickhouse_loader.py`, which remains engine-agnostic
-  and only understands pandas DataFrames.
-- **Open risk, not yet verified:** Spark's `DateType`/`TimestampType`
-  columns may not convert to the same Python types
-  (`datetime.date`/`None`) that `clickhouse-connect` requires (ADR-009,
-  ADR-010, ADR-012 document the equivalent problem on the pandas/parquet
-  side). This must be verified with a dedicated test before Phase 3 is
-  considered complete — do not assume `.toPandas()` "just works" here.
+- Engine selection implemented via `TRANSFORM_ENGINE` env var
+  (`docker-compose.yml` / `.env.example`, default `"pandas"`), read once
+  at DAG-parse time in `dags/sync_tasktracker_to_clickhouse.py`. The
+  Spark branch imports `transform.spark_ops` lazily (inside the
+  function, not at module top) so DAG parsing doesn't require a JVM
+  when pandas is selected.
+- `tests/test_spark_ops.py` added, mirroring `tests/test_pandas_ops.py`'s
+  coverage, plus dedicated dtype-after-`.toPandas()` check.
+  Run these before relying on the Spark path in a real pipeline run.
 
 ---
 
@@ -638,11 +638,67 @@ the alternative of a dedicated Spark cluster service.
   3.5.x is the last release in the line already validated against
   Python 3.12 by the wider community. Revisit once 4.x has more track
   record, or if a specific 4.x feature becomes needed.
-- `JAVA_HOME=/usr/lib/jvm/default-java` set in the Dockerfile assumes
-  Debian's `default-jdk-headless` symlink convention — not yet verified
-  against the base image's actual filesystem; check with
-  `docker compose exec airflow readlink -f $(which java)` after the
-  first build and adjust if the path differs.
+- `JAVA_HOME` via `docker compose exec airflow readlink -f
+  $(which java)` after the first build → resolved to 
+  `/usr/lib/jvm/java-17-openjdk-arm64` — Dockerfile updated to this path. 
+  If rebuilt on amd64, this will need updating; irrelevant to CI,
+  which never builds this Dockerfile.
+- PySpark 3.5.3 emits `DeprecationWarning` from its own internal code
+  (`distutils.Version`, `is_datetime64tz_dtype`) when converting to/from
+  pandas — suppressed via scoped `filterwarnings` entries in
+  `pyproject.toml` (module + message, not a blanket
+  `ignore::DeprecationWarning`) so real deprecation warnings from this
+  project's own code still surface. `UP038` also added to ruff's ignore
+  list — deprecated by ruff itself since v0.10 (slower, misleading
+  isinstance/issubclass syntax; Apache Airflow reverted the same change
+  for the same reason).
+
+---
+
+## ADR-018 — Explicit pyarrow schema for tasks parquet (extract + tests)
+
+**Date:** Phase 3
+**Status:** Accepted
+
+**Decision:** `src/extract/tasktracker.py`'s `_write_parquet()` gained an
+optional `schema` parameter. `extract_tasks()` passes an explicit
+`pa.schema(...)` (typing `owner`/`project` as structs, `due_date` as
+string) — `extract_projects()` does not, since its records are flat.
+`tests/test_spark_ops.py`'s fixture helper mirrors the same explicit
+schema.
+
+**Context:** Discovered while writing `tests/test_spark_ops.py`:
+`pa.Table.from_pylist(records)` without a schema infers each column's
+type from the data present. When EVERY record in a batch has
+`project=None` (or `due_date=None`) — a real possibility, not just a
+test artifact, e.g. a fresh TaskTracker instance with zero projects
+assigned — PyArrow infers that column as its `null` type rather than a
+struct/string. Spark then can't run `F.col("project.id")` against it
+(`AnalysisException: Can't extract a value from "project"`), because
+there's no struct to extract from. This affects the real production
+extract path (`extract_tasks()`), not only test fixtures — any real run
+where TaskTracker returns a batch of tasks all missing a project would
+hit this exact failure under `TRANSFORM_ENGINE=spark`.
+
+**Alternatives considered:**
+- Fix only on the Spark read side (`spark.read.schema(...).parquet(...)`)
+  — would leave the physical parquet file's own type ambiguous/
+  inconsistent with what's declared, and doesn't fix `pandas_ops.py`'s
+  read path if it ever hit the same edge case; fixing at write time
+  makes the file self-describing for any reader.
+
+**Consequences:**
+- If `apps/tasks/serializers.py`'s `TaskSerializer` fields change (new
+  field added/renamed), `_TASKS_ARROW_SCHEMA` must be updated in lockstep
+  — this is now a second place (besides the serializer itself) that
+  encodes the task shape. Documented here so it isn't missed.
+- `pandas_ops.py`'s read path was not observed to have this problem in
+  practice (existing tests pass), likely because `pd.read_parquet(...,
+  dtype_backend="pyarrow")` + Python-level `isinstance(project, dict)`
+  checks in `_extract_project_fields()` don't require the column to be
+  declared as a struct type the way Spark's `col("project.id")` does —
+  not fully verified as a general guarantee, just an empirical
+  observation from this project's test suite so far.
 
 ---
 
