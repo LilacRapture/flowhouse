@@ -9,6 +9,14 @@ markers = [
     "integration: needs a real ClickHouse instance (docker-compose or CI service container), not just a fake client",
 ]
 addopts = "--strict-markers"
+filterwarnings = [
+    # PySpark 3.5.3's own internal code uses deprecated
+    # pandas/stdlib APIs — scoped to the exact module + message so any
+    # future DeprecationWarning from OUR OWN code (src/, dags/) still
+    # surfaces normally, rather than blanket-ignoring the category.
+    "ignore:distutils Version classes are deprecated:DeprecationWarning:pyspark\\.sql\\.pandas\\.utils",
+    "ignore:is_datetime64tz_dtype is deprecated:DeprecationWarning:pyspark\\.sql\\.pandas\\.types",
+]
 
 [tool.ruff]
 line-length = 100
@@ -23,4 +31,8 @@ select = [
 ]
 ignore = [
     "E501",
+    "UP038",  # deprecated since ruff 0.10 (isinstance(x, X | Y) is slower
+              # and misleadingly implies broader typing-syntax support
+              # than isinstance actually has); Airflow itself reverted
+              # this same change for the same reason.
 ]

@@ -27,6 +27,24 @@ logger = logging.getLogger(__name__)
 CONN_ID = "tasktracker_api"
 DATA_DIR = os.environ.get("FLOWHOUSE_DATA_DIR", "/opt/airflow/data/raw")
 _REQUEST_TIMEOUT = 10  # seconds
+_TASKS_ARROW_SCHEMA = pa.schema([
+    pa.field("id", pa.int64()),
+    pa.field("title", pa.string()),
+    pa.field("description", pa.string()),
+    pa.field("status", pa.string()),
+    pa.field("due_date", pa.string()),
+    pa.field("owner", pa.struct([
+        pa.field("id", pa.int64()),
+        pa.field("email", pa.string()),
+        pa.field("full_name", pa.string()),
+    ])),
+    pa.field("project", pa.struct([
+        pa.field("id", pa.int64()),
+        pa.field("name", pa.string()),
+    ])),
+    pa.field("created_at", pa.string()),
+    pa.field("updated_at", pa.string()),
+])
 
 
 def _base_url(conn) -> str:
@@ -61,32 +79,27 @@ def _fetch_all_pages(session: requests.Session, url: str) -> list[dict]:
     return records
 
 
-def _write_parquet(records: list[dict], resource: str) -> str:
+def _write_parquet(records: list[dict], resource: str, schema: pa.Schema | None = None) -> str:
     """
-    Writes raw records straight to parquet via pyarrow, without building a
-    pandas DataFrame first. Two reasons, not just one: (1) extract's job
-    is to persist data unmodified — no pandas-specific processing happens
-    here, so there's no need for its API; (2) pandas silently upcasts
-    integer columns containing None to float64 (e.g. a nullable FK id
-    becomes 5.0 instead of 5) — pyarrow keeps them as nullable int64. The
-    transform step (pandas, by design) reads this file back afterwards.
+    schema is optional and only passed for "tasks" — a
+    batch where a nested field (project, due_date) is None/absent for
+    EVERY record gets pyarrow-inferred as a null type without an
+    explicit schema, which downstream Spark reads can't extract struct
+    fields from. "projects" records are flat with no nested-null risk,
+    so they keep relying on inference.
     """
     os.makedirs(DATA_DIR, exist_ok=True)
     run_date = datetime.now(UTC).strftime("%Y-%m-%d")
     path = os.path.join(DATA_DIR, f"{resource}_{run_date}.parquet")
 
-    table = pa.Table.from_pylist(records)
+    table = pa.Table.from_pylist(records, schema=schema)
     pq.write_table(table, path)
 
     logger.info("Wrote %d %s record(s) to %s", len(records), resource, path)
     return path
 
 
-def _extract_resource(resource: str) -> str:
-    """
-    Shared by extract_tasks() / extract_projects(): logs in once, pages
-    through GET /api/{resource}/, writes parquet, and returns its path.
-    """
+def _extract_resource(resource: str, schema: pa.Schema | None = None) -> str:
     conn = BaseHook.get_connection(CONN_ID)
     base_url = _base_url(conn)
 
@@ -95,15 +108,14 @@ def _extract_resource(resource: str) -> str:
         session.headers["Authorization"] = f"Bearer {token}"
         records = _fetch_all_pages(session, f"{base_url}/api/{resource}/")
 
-    return _write_parquet(records, resource)
+    return _write_parquet(records, resource, schema=schema)
 
 
 def extract_tasks() -> str:
     """Airflow task entrypoint. Returns the parquet path (XCom-safe)."""
-    return _extract_resource("tasks")
+    return _extract_resource("tasks", schema=_TASKS_ARROW_SCHEMA)
 
 
 def extract_projects() -> str:
     """Airflow task entrypoint. Returns the parquet path (XCom-safe)."""
     return _extract_resource("projects")
-    
