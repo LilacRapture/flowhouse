@@ -27,11 +27,19 @@ etl-project/
 ├── Dockerfile             # apache/airflow base + our extra deps
 ├── requirements.txt
 ├── dags/
-│   └── health_check.py    # skeleton — DAG shape only, no real ETL yet
+│   ├── health_check.py                    # permanent connectivity-only DAG
+│   └── sync_tasktracker_to_clickhouse.py  # real ETL DAG; TRANSFORM_ENGINE env var
+│                                          # selects pandas (default) or spark
 ├── src/
-│   ├── extract/           # one module per data source (empty so far)
-│   ├── transform/         # pandas ops, later spark_ops.py
-│   └── load/               # clickhouse_loader.py (not written yet)
+│   ├── extract/
+│   │   └── tasktracker.py   # JWT login, paginated pull, parquet write
+│   │                        # (explicit pyarrow schema for tasks)
+│   ├── transform/
+│   │   ├── pandas_ops.py    # default transform engine
+│   │   └── spark_ops.py     # PySpark variant — same grouping/output
+│   │                        # schema as pandas_ops.py, local SparkSession
+│   └── load/
+│       └── clickhouse_loader.py
 ├── tests/
 ├── docs/
 └── .env.example
@@ -46,7 +54,12 @@ ClickHouse — end-to-end, with unit tests, a ClickHouse integration test
 suite, and CI (ruff + pytest + a ClickHouse service container). The
 `health_check` DAG remains as a separate, permanent connectivity check.
 
-Phase 3 (a PySpark variant of the transform step) is next — see AGENTS.md.
+**Phase 3 (PySpark transform engine) landed.** `src/transform/spark_ops.py`
+mirrors `pandas_ops.py`'s two functions exactly (same grouping, same
+overdue definition, same output schema) as a parallel, selectable engine —
+not a replacement. Selected via the `TRANSFORM_ENGINE` env var (`pandas`
+default, or `spark`), runs as a local SparkSession inside the same
+container (no separate cluster). See AGENTS.md for what's still open.
 
 ## Request Lifecycle
 

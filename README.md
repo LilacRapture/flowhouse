@@ -14,6 +14,8 @@ Phase 3 (PySpark transform variant) is next — see `AGENTS.md`.
 - Apache Airflow 2.9 (LocalExecutor, `airflow standalone`)
 - ClickHouse
 - Python 3.12
+- pandas (default transform engine) or PySpark (`TRANSFORM_ENGINE=spark`,
+  local SparkSession, no cluster)
 
 ## Quick start
 
@@ -47,6 +49,13 @@ Then check its run in the UI, or:
 ```bash
 docker compose exec airflow airflow dags list-runs -d health_check
 ```
+
+## Transform engine
+
+The `sync_tasktracker_to_clickhouse` DAG's transform step defaults to
+pandas. Set `TRANSFORM_ENGINE=spark` in `.env` to run the same logic via
+a local PySpark session instead — output schema is identical either way,
+so the load step and ClickHouse tables don't change.
 
 ## Tests
 
