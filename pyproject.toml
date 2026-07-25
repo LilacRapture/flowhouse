@@ -21,6 +21,7 @@ filterwarnings = [
 [tool.ruff]
 line-length = 100
 target-version = "py312"
+required-version = ">=0.15.22,<0.16"
 
 [tool.ruff.lint]
 select = [
@@ -30,9 +31,5 @@ select = [
     "UP",  # pyupgrade
 ]
 ignore = [
-    "E501",
-    "UP038",  # deprecated since ruff 0.10 (isinstance(x, X | Y) is slower
-              # and misleadingly implies broader typing-syntax support
-              # than isinstance actually has); Airflow itself reverted
-              # this same change for the same reason.
+    "E501"
 ]

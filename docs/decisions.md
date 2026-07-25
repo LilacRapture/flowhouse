@@ -648,10 +648,7 @@ the alternative of a dedicated Spark cluster service.
   pandas — suppressed via scoped `filterwarnings` entries in
   `pyproject.toml` (module + message, not a blanket
   `ignore::DeprecationWarning`) so real deprecation warnings from this
-  project's own code still surface. `UP038` also added to ruff's ignore
-  list — deprecated by ruff itself since v0.10 (slower, misleading
-  isinstance/issubclass syntax; Apache Airflow reverted the same change
-  for the same reason).
+  project's own code still surface.
 
 ---
 
@@ -699,6 +696,48 @@ hit this exact failure under `TRANSFORM_ENGINE=spark`.
   declared as a struct type the way Spark's `col("project.id")` does —
   not fully verified as a general guarantee, just an empirical
   observation from this project's test suite so far.
+
+---
+
+## ADR-019 — Upgrade ruff 0.6.9 → 0.15.22 (0.15.x line, not 0.16.0)
+
+**Date:** Phase 3
+**Status:** Accepted
+
+**Decision:** Upgrade `ruff` from `0.6.9` to `0.15.22` — the last patch
+release in the 0.15.x line — not the current latest, `0.16.0` (released
+2026-07-23). Added `required-version = ">=0.15.22,<0.16"` under
+`[tool.ruff]` so a mismatched local/CI ruff version fails loudly instead
+of silently linting with a different rule set.
+
+**Context:** `UP038` (`non-pep604-isinstance`) had to be manually added
+to `ignore` during Phase 3 (see prior state of this file) because
+`ruff==0.6.9` still actively enforced it, despite the rule already being
+deprecated upstream since ruff v0.10 for being slower and misleading
+(`isinstance(x, X | Y)` incorrectly implies broader typing-syntax support
+than `isinstance` actually has — Apache Airflow reverted the identical
+migration for the same reason). Investigating this pointed at a broader
+problem: `0.6.9` predates roughly a year and a half of ruff releases,
+including many bug fixes and new checks within the `E`/`F`/`I`/`UP`
+categories this project actually uses.
+
+**Alternatives considered:**
+- Stay on `0.6.9` — zero upgrade risk today, but leaves the project
+  linting against an increasingly outdated rule implementation, and
+  keeps carrying a workaround (`UP038` in `ignore`) for a rule that no
+  longer needs one.
+- Jump straight to `0.16.0` (latest at the time) — `0.16.0` was 2 days
+  old when this decision was made and ships a large default-ruleset
+  change (413 rules enabled by default, up from 59). This project's
+  explicit `select = ["E", "F", "I", "UP"]` fully replaces ruff's
+  defaults, so that specific change doesn't affect it directly — but a
+  release that fresh carries more general regression risk than a
+  months-old patch in the previous line, for no benefit this project
+  needs right now.
+
+**Consequences:**
+- `UP038` was fully **removed** as a rule (not just deprecated) by ruff
+  before `0.15.22` — confirmed by ruff itself.
 
 ---
 
