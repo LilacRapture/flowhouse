@@ -22,7 +22,7 @@ DB (ClickHouse), not another CRUD backend.
 ## Project Layout
 
 ```
-etl-project/
+flowhouse/
 ├── docker-compose.yml     # airflow-postgres, clickhouse, airflow (standalone)
 ├── Dockerfile             # apache/airflow base + our extra deps
 ├── requirements.txt

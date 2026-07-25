@@ -744,48 +744,51 @@ categories this project actually uses.
 ## ADR-020 — Dash + Plotly dashboard as a separate service, reading ClickHouse directly
 
 **Date:** Phase 4 planning
-**Status:** Proposed (not yet implemented)
+**Status:** Accepted
 
 **Decision:** Add a Dash (Plotly) app as a new, independent service in
 docker-compose — `dashboard` — that reads directly from ClickHouse
-(`raw_tasks`, `daily_task_snapshot`) and renders a few charts (overdue
-trend over time, task count by project/status, etc.). It does not touch
-the Airflow container, the DAG, or the transform/load code in any way —
-purely a new consumer of tables that already exist.
+(`raw_tasks`, `daily_task_snapshot`) and renders two charts: overdue
+task trend over time, and task count by project/status. Protected by
+HTTP Basic Auth. Queries ClickHouse fresh on each page load — no
+polling/interval refresh. Does not touch the Airflow container, the
+DAG, or the transform/load code in any way.
 
 **Context:** flowhouse's pipeline currently ends at "data sits in
-ClickHouse." This will add a visualization
-layer, while staying a natural extension of a pipeline.
+ClickHouse."
+
+**Scope decisions:**
+- **Charts:** overdue trend (from `daily_task_snapshot`, aggregated
+  across `project_id`/`owner_id` per day) + task count by
+  project/status (from `raw_tasks`, current-state snapshot).
+- **Refresh strategy:** live query on page load, not `dcc.Interval`
+  polling. `sync_tasktracker_to_clickhouse` runs `@daily` 
+  — the underlying data changes at most once a day, 
+  so polling ClickHouse every minute would add load with no
+  freshness benefit. Revisit if the DAG's schedule ever moves to
+  intraday.
+- **Auth:** HTTP Basic Auth — credentials via env vars
+  (`DASHBOARD_USER`/`DASHBOARD_PASSWORD`), same `.env` convention as
+  the rest of the project. Not meant to be internet-facing; this is
+  enough to keep it off-limits from casual access on a shared/demo host,
+  not a real access-control system.
 
 **Alternatives considered:**
-- Metabase / Superset (pre-built BI tool pointed at ClickHouse) — zero
-  code, "real" BI tool experience, but demonstrates configuration, not
-  a skill/portfolio artifact — no code to review.
-- Grafana with a ClickHouse data source — same tradeoff as
-  Metabase/Superset, plus it's more naturally an ops/monitoring tool
-  than an analytics dashboard for this project's actual data.
-- Streamlit instead of Dash — comparable effort.
-- Building the dashboard INTO the Airflow container — rejected: mixes
-  an always-on web app into a container whose lifecycle (scheduler,
-  webserver, triggerer) is unrelated; also blocks independently
-  restarting/redeploying the dashboard without touching Airflow.
+- Metabase / Superset — zero code.
+- Streamlit — comparable effort to Dash.
+- Building the dashboard into the Airflow container — rejected, couples
+  an always-on web app's lifecycle to Airflow's.
 
-**Consequences (once implemented):**
-- New `dashboard/` directory: `app.py` (Dash layout + callbacks), own
-  `requirements.txt` (dash, plotly, clickhouse-connect — no pandas/
-  pyspark/airflow deps needed), own lightweight Dockerfile.
+**Consequences:**
+- New `dashboard/` directory: `app.py`, `requirements.txt`, `Dockerfile`.
 - New `dashboard` service in `docker-compose.yml`: depends on
   `clickhouse` (`condition: service_healthy`), reads
-  CLICKHOUSE_HOST/PORT/USER/PASSWORD from the same `.env` as the
-  `airflow` service (read-only consumer, no new ClickHouse user needed
-  — revisit if write access or a dashboard-specific user ever becomes
-  relevant).
-- Read-only queries only — no risk to pipeline data even if the
-  dashboard has a bug.
-- `docs/architecture.md` gains a short "Visualization" section;
-  `AGENTS.md` gains a Phase 4 checklist.
-- No changes needed to raw_tasks/daily_task_snapshot schemas — Phase 4
-  is additive only.
+  `CLICKHOUSE_HOST`/`PORT`/`USER`/`PASSWORD` from the same `.env` as
+  `airflow`, plus new `DASHBOARD_USER`/`DASHBOARD_PASSWORD`.
+- Read-only ClickHouse queries only.
+- `docs/architecture.md` gains a "Visualization" section; `AGENTS.md`
+  Phase 4 checklist updated to in-progress.
+- No changes to `raw_tasks`/`daily_task_snapshot` schemas.
 
 ---
 
