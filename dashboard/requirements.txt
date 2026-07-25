@@ -1,0 +1,7 @@
+dash==4.4.1
+plotly==6.9.0
+clickhouse-connect==0.7.19
+
+# Dev
+pytest==8.2.2
+ruff==0.15.22
