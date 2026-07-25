@@ -54,12 +54,15 @@ ClickHouse — end-to-end, with unit tests, a ClickHouse integration test
 suite, and CI (ruff + pytest + a ClickHouse service container). The
 `health_check` DAG remains as a separate, permanent connectivity check.
 
-**Phase 3 (PySpark transform engine) landed.** `src/transform/spark_ops.py`
+**Phase 3 (PySpark transform engine) complete.** `src/transform/spark_ops.py`
 mirrors `pandas_ops.py`'s two functions exactly (same grouping, same
 overdue definition, same output schema) as a parallel, selectable engine —
 not a replacement. Selected via the `TRANSFORM_ENGINE` env var (`pandas`
 default, or `spark`), runs as a local SparkSession inside the same
-container (no separate cluster). See AGENTS.md for what's still open.
+container (no separate cluster).
+
+**Phase 4 planned.** A Dash/Plotly dashboard (separate service, reads
+ClickHouse directly) is the next planned addition. Not yet implemented.
 
 ## Request Lifecycle
 

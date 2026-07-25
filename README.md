@@ -4,10 +4,11 @@
 Batch ETL pipeline: TaskTracker's REST API → transform (pandas, later
 PySpark) → ClickHouse. Orchestrated by Apache Airflow.
 
-**Status:** Phases 1–2 complete — the full extract → transform → load
+**Status:** Phases 1–3 complete — the full extract → transform → load
 pipeline (`sync_tasktracker_to_clickhouse` DAG) runs end-to-end against a
 real ClickHouse instance, with unit + integration test coverage and CI.
-Phase 3 (PySpark transform variant) is next — see `AGENTS.md`.
+Transform engine is selectable via `TRANSFORM_ENGINE` (pandas default,
+or spark — PySpark, see AGENTS.md/docs/decisions.md).
 
 ## Stack
 

@@ -71,12 +71,38 @@ See `docs/architecture.md` for the full picture. Short version:
   [x] CI (GitHub Actions): ruff, DAG-import test (part of the normal
        pytest run), ClickHouse service container — see ADR-015
 
-### Phase 3 — Not started
-- [ ] PySpark variant of the transform step (local `SparkSession`, no
-      cluster) — added only after Phase 1's pandas pipeline works
-      end-to-end
+### Phase 3 — Done
+- [x] `src/transform/spark_ops.py` — PySpark variant, mirrors pandas_ops.py
+      exactly (grouping, overdue definition, output schema); selectable
+      per run via `TRANSFORM_ENGINE` env var, local SparkSession
+- [x] Explicit pyarrow schema for tasks parquet, needed for Spark struct
+      extraction
+- [x] ruff upgraded 0.6.9 → 0.15.22
+- [x] `tests/test_spark_ops.py` — mirrors test_pandas_ops.py's coverage,
+      plus dtype checks after .toPandas() and an end-to-end check that
+      Spark output loads via the existing (unmodified) clickhouse_loader
+
+### Phase 4 — Planned
+- [ ] Dash + Plotly dashboard as a separate `dashboard` service, reading
+      ClickHouse directly (raw_tasks, daily_task_snapshot) — no changes
+      to the Airflow container or existing pipeline code
+- [ ] A handful of charts: overdue trend over time, task count by
+      project/status, whatever ClickHouse tables currently support
+      without new aggregation logic
 
 ### Open Questions
 - Incremental loads (via `updated_at`) deferred — MVP is full-refresh.
   Revisit if TaskTracker's API grows an `updated_at` filter or data
   volume stops being trivial.
+- `_TASKS_ARROW_SCHEMA` (src/extract/tasktracker.py) and the mirrored
+  schema in tests/test_spark_ops.py must be kept in sync with
+  TaskTracker's TaskSerializer fields — no automated check for drift
+  (see ADR-018 consequences).
+- Polars as a third transform engine — considered, not started. Unlike
+  pandas→pyspark (single-node vs distributed, genuinely different
+  paradigm), polars is philosophically closer to pandas (single-process
+  DataFrame API). Worth doing as a partial (one function, not fully
+  mirrored like ADR-016's pandas/spark symmetry) demonstration rather
+  than a third fully-symmetric engine — full symmetry would mean a
+  third test file, a third DAG branch, and a third ADR for a skill that
+  overlaps heavily with pandas.

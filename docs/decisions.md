@@ -741,6 +741,54 @@ categories this project actually uses.
 
 ---
 
+## ADR-020 — Dash + Plotly dashboard as a separate service, reading ClickHouse directly
+
+**Date:** Phase 4 planning
+**Status:** Proposed (not yet implemented)
+
+**Decision:** Add a Dash (Plotly) app as a new, independent service in
+docker-compose — `dashboard` — that reads directly from ClickHouse
+(`raw_tasks`, `daily_task_snapshot`) and renders a few charts (overdue
+trend over time, task count by project/status, etc.). It does not touch
+the Airflow container, the DAG, or the transform/load code in any way —
+purely a new consumer of tables that already exist.
+
+**Context:** flowhouse's pipeline currently ends at "data sits in
+ClickHouse." This will add a visualization
+layer, while staying a natural extension of a pipeline.
+
+**Alternatives considered:**
+- Metabase / Superset (pre-built BI tool pointed at ClickHouse) — zero
+  code, "real" BI tool experience, but demonstrates configuration, not
+  a skill/portfolio artifact — no code to review.
+- Grafana with a ClickHouse data source — same tradeoff as
+  Metabase/Superset, plus it's more naturally an ops/monitoring tool
+  than an analytics dashboard for this project's actual data.
+- Streamlit instead of Dash — comparable effort.
+- Building the dashboard INTO the Airflow container — rejected: mixes
+  an always-on web app into a container whose lifecycle (scheduler,
+  webserver, triggerer) is unrelated; also blocks independently
+  restarting/redeploying the dashboard without touching Airflow.
+
+**Consequences (once implemented):**
+- New `dashboard/` directory: `app.py` (Dash layout + callbacks), own
+  `requirements.txt` (dash, plotly, clickhouse-connect — no pandas/
+  pyspark/airflow deps needed), own lightweight Dockerfile.
+- New `dashboard` service in `docker-compose.yml`: depends on
+  `clickhouse` (`condition: service_healthy`), reads
+  CLICKHOUSE_HOST/PORT/USER/PASSWORD from the same `.env` as the
+  `airflow` service (read-only consumer, no new ClickHouse user needed
+  — revisit if write access or a dashboard-specific user ever becomes
+  relevant).
+- Read-only queries only — no risk to pipeline data even if the
+  dashboard has a bug.
+- `docs/architecture.md` gains a short "Visualization" section;
+  `AGENTS.md` gains a Phase 4 checklist.
+- No changes needed to raw_tasks/daily_task_snapshot schemas — Phase 4
+  is additive only.
+
+---
+
 ## Template for new ADRs
 
 ```
