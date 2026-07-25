@@ -13,8 +13,6 @@ jobs:
       clickhouse:
         image: clickhouse/clickhouse-server:24.8
         env:
-          # Dedicated user, not `default` — the image
-          # disables `default`'s network access unless one of these is set.
           CLICKHOUSE_DB: flowhouse
           CLICKHOUSE_USER: flowhouse
           CLICKHOUSE_PASSWORD: flowhouse
@@ -43,6 +41,16 @@ jobs:
         with:
           python-version: "3.12"
           cache: "pip"
+
+      # pyspark (test_spark_ops.py) needs a real JRE to start a
+      # SparkSession. Pinned to 17 to match the JRE used in Dockerfile
+      # (default-jdk-headless / JAVA_HOME=.../java-17-openjdk-...), so
+      # CI and the container aren't silently running different JVMs.
+      - name: Set up Java 17 (for PySpark)
+        uses: actions/setup-java@v4
+        with:
+          distribution: "temurin"
+          java-version: "17"
 
       - name: Install dependencies
         run: |
