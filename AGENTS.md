@@ -98,6 +98,15 @@ See `docs/architecture.md` for the full picture. Short version:
   schema in tests/test_spark_ops.py must be kept in sync with
   TaskTracker's TaskSerializer fields — no automated check for drift
   (see ADR-018 consequences).
+- Single source-of-truth schema (option B from the ADR-021 retrospective) —
+  define the task shape once (e.g., a pydantic model or dataclass) and
+  derive both `_TASKS_ARROW_SCHEMA` and the test fixture schema from it,
+  instead of maintaining two hand-written copies. Not started — the risk
+  is currently hypothetical (no drift incident has happened), and this
+  is a real refactor (introduces a new dependency if pydantic isn't
+  already in use, touches extract + tests). Worth doing if: a third
+  place starts needing the same schema, TaskTracker's Task fields change
+  more than rarely, or an actual drift bug occurs.
 - Polars as a third transform engine — considered, not started. Unlike
   pandas→pyspark (single-node vs distributed, genuinely different
   paradigm), polars is philosophically closer to pandas (single-process

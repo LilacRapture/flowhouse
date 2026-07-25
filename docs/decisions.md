@@ -789,6 +789,94 @@ layer, while staying a natural extension of a pipeline.
 
 ---
 
+## ADR-021 — General principle: explicit schema over type inference at system boundaries
+
+**Date:** Phase 3 retrospective
+**Status:** Accepted (documentation-only — no code change)
+
+**Decision:** Formalize a principle already applied piecemeal across
+ADR-006, ADR-009, ADR-012, and ADR-018: never rely on type inference at
+a boundary between two different type systems. Declare the expected
+schema/dtype explicitly at every such boundary instead. This ADR does
+not introduce new code — it names the pattern so it's recognized
+immediately next time, rather than re-discovered incident by incident.
+
+**Context:** Across this project's development, four separate ADRs were
+written for what turned out to be the same underlying failure mode
+recurring at three different boundaries this pipeline crosses:
+
+JSON (TaskTracker API)
+│ boundary 1: pyarrow.Table.from_pylist() infers types
+▼
+Parquet file
+│ boundary 2: pd.read_parquet() infers pandas dtypes
+▼
+pandas DataFrame
+│ boundary 3: clickhouse-connect infers null/None handling per column
+▼
+ClickHouse
+
+- **Boundary 1** (ADR-018): a batch where every record's `project` field
+  is `None` gets inferred by PyArrow as its `null` type, not
+  `struct<id, name>` — because there's no non-null value to infer a
+  concrete type from. Fixed by passing an explicit `pa.schema(...)`.
+- **Boundary 2** (ADR-006/009): reading that parquet back with pandas'
+  default or `numpy_nullable` backend silently upcasts `int64` fields —
+  including inside nested structs — to `float64` whenever a null is
+  present. Fixed by reading with `dtype_backend="pyarrow"`.
+- **Boundary 3** (ADR-012): clickhouse-connect's write path checks
+  `x is None` (or `if x` for numerics) directly on each value — pandas'
+  own missing-value sentinels (`pd.NA`, `pd.NaT`, `np.nan`) are not
+  recognized as null and either silently write wrong data or crash.
+  Fixed by explicitly normalizing to literal `None` before `insert_df()`.
+
+None of these is a defect in this project's design — each is a
+documented, independently-known characteristic of the respective
+library (PyArrow's own docs state the null-type-inference behavior
+explicitly; clickhouse-connect has multiple open upstream GitHub issues
+on the NaN/None/pd.NA handling class of problem). What all four share is
+the same root cause: inference was allowed to run at a system boundary
+where the two sides don't agree on how "missing" is represented.
+
+**Alternatives considered:**
+- A single project-wide "nullable dtype" setting (e.g., pandas'
+  extension dtypes — `Int64`, `Float64`, `boolean` — used consistently
+  everywhere) — would not have prevented any of the four incidents.
+  Boundary 1 happens before pandas is even involved. Boundary 3 is a
+  property of clickhouse-connect's serialization code, independent of
+  which pandas dtype family is used upstream. There is no single toggle
+  that closes all three boundaries; each needs its own explicit
+  declaration.
+- Do nothing beyond the four existing ADRs — technically sufficient
+  (each incident already has its own accepted fix), but leaves the
+  connecting pattern implicit; the next new field/source is more likely
+  to reproduce all four investigations independently instead of
+  recognizing "boundary + inference = check the schema is explicit"
+  immediately.
+
+**Consequences:**
+- No code changes from this ADR alone.
+- Establishes a checklist for any *future* boundary this pipeline gains
+  (a new extractor, a new load target, a new transform engine): does
+  data cross into a system with a different type/null model? If yes,
+  declare the schema explicitly on the way in, don't rely on inference
+  from a sample batch.
+- Does not eliminate the remaining structural risk flagged in ADR-018's
+  own Consequences — `_TASKS_ARROW_SCHEMA` in
+  `src/extract/tasktracker.py` and the mirrored schema in
+  `tests/test_spark_ops.py` are still two independently-maintained
+  copies of the same shape, with no automated drift check between them
+  and TaskTracker's `TaskSerializer`. A single source-of-truth schema
+  (e.g., a pydantic model or dataclass that both derive from) would
+  close that gap, but is a separate, larger change — not undertaken
+  here since no real drift incident has occurred yet. Tracked as an
+  Open Question below.
+
+**See also:** ADR-006, ADR-009, ADR-012, ADR-018 (each still stands on
+its own — this ADR only names the pattern connecting them).
+
+---
+
 ## Template for new ADRs
 
 ```
