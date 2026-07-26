@@ -11,7 +11,7 @@ See `docs/architecture.md` for the full picture. Short version:
 
 - `dags/` — thin DAG files only; no business logic (see Code Style below)
 - `src/extract/` — one module per data source
-- `src/transform/` — pandas ops (Phase 1), PySpark variant later (Phase 3)
+- `src/transform/` — pandas ops, PySpark variant later
 - `src/load/` — ClickHouse loaders
 
 ## Rules
@@ -82,13 +82,14 @@ See `docs/architecture.md` for the full picture. Short version:
       plus dtype checks after .toPandas() and an end-to-end check that
       Spark output loads via the existing (unmodified) clickhouse_loader
 
-### Phase 4 — Planned
-- [ ] Dash + Plotly dashboard as a separate `dashboard` service, reading
-      ClickHouse directly (raw_tasks, daily_task_snapshot) — no changes
-      to the Airflow container or existing pipeline code
-- [ ] A handful of charts: overdue trend over time, task count by
-      project/status, whatever ClickHouse tables currently support
-      without new aggregation logic
+### Phase 4 — Done
+- [x] `dashboard/` — standalone Dash + Plotly service, reads
+      ClickHouse directly, no changes to Airflow container or pipeline code
+- [x] Two charts: overdue trend over time, task count by project/status
+- [x] HTTP Basic Auth via a plain Flask `before_request` hook (no
+      dash-auth dependency)
+- [x] `dashboard/tests/` — auth boundary tests + query-layer tests
+      against a fake ClickHouse client, own `pyproject.toml`/`requirements.txt`
 
 ### Open Questions
 - Incremental loads (via `updated_at`) deferred — MVP is full-refresh.
@@ -115,3 +116,7 @@ See `docs/architecture.md` for the full picture. Short version:
   than a third fully-symmetric engine — full symmetry would mean a
   third test file, a third DAG branch, and a third ADR for a skill that
   overlaps heavily with pandas.
+- Dashboard has no charts beyond the initial two (overdue trend, task
+  count by project/status) — more views (e.g. task velocity, per-owner
+  breakdown) would need new `queries.py` functions but no architectural
+  change; deferred until a real need for a specific view comes up.

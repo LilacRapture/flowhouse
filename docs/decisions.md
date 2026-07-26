@@ -789,6 +789,11 @@ ClickHouse."
 - `docs/architecture.md` gains a "Visualization" section; `AGENTS.md`
   Phase 4 checklist updated to in-progress.
 - No changes to `raw_tasks`/`daily_task_snapshot` schemas.
+- **Post-implementation note:** deployed image-only (like TaskTracker's
+  `web` service), not bind-mounted like `airflow`'s
+  `dags`/`src` — the dashboard doesn't need Airflow's live-reload
+  DAG-development workflow. `docker compose build dashboard` required
+  after any code change.
 
 ---
 

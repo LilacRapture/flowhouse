@@ -1,14 +1,16 @@
 # flowhouse
 ![Tests](https://github.com/LilacRapture/flowhouse/actions/workflows/tests.yml/badge.svg)
 
-Batch ETL pipeline: TaskTracker's REST API → transform (pandas, later
-PySpark) → ClickHouse. Orchestrated by Apache Airflow.
+Batch ETL pipeline: TaskTracker's REST API → transform (pandas or
+PySpark) → ClickHouse -> visualization (Dash). Orchestrated by Apache Airflow.
 
-**Status:** Phases 1–3 complete — the full extract → transform → load
+**Status:** Phases 1–4 complete — the full extract → transform → load
 pipeline (`sync_tasktracker_to_clickhouse` DAG) runs end-to-end against a
 real ClickHouse instance, with unit + integration test coverage and CI.
 Transform engine is selectable via `TRANSFORM_ENGINE` (pandas default,
-or spark — PySpark, see AGENTS.md/docs/decisions.md).
+or spark — PySpark, see AGENTS.md/docs/decisions.md). A separate Dash +
+Plotly dashboard (`dashboard/`) visualizes the loaded data (overdue
+trend, task count by project/status), protected by HTTP Basic Auth.
 
 ## Stack
 
@@ -17,6 +19,7 @@ or spark — PySpark, see AGENTS.md/docs/decisions.md).
 - Python 3.12
 - pandas (default transform engine) or PySpark (`TRANSFORM_ENGINE=spark`,
   local SparkSession, no cluster)
+- Dash + Plotly (`dashboard/` service, HTTP Basic Auth)
 
 ## Quick start
 
@@ -36,8 +39,8 @@ DB and creates an admin user. Find the generated password with:
 docker compose logs airflow | grep -A1 "Password for user 'admin'"
 ```
 
-Airflow UI: `http://localhost:8080` (not to be confused with TaskTracker's
-own `http://localhost:8000`).
+Airflow UI: `http://localhost:8080`
+Dashboard: `http://localhost:8050` (HTTP Basic Auth — credentials from `.env`)
 
 Trigger the skeleton DAG manually (it has no schedule):
 
