@@ -3,7 +3,7 @@ Tests for dashboard/queries.py using a concrete fake client
 (_FakeClickHouseClient), not MagicMock. No real ClickHouse
 instance involved.
 """
-from queries import get_overdue_trend, get_task_count_by_project_status
+from queries import get_distinct_projects, get_overdue_trend, get_task_count_by_project_status
 
 
 class _FakeQueryResult:
@@ -72,3 +72,34 @@ def test_get_task_count_by_project_status_queries_raw_tasks_table():
 def test_get_task_count_by_project_status_empty_table_returns_empty_list():
     client = _FakeClickHouseClient(result_rows=[])
     assert get_task_count_by_project_status(client) == []
+
+
+# ---------------------------------------------------------------------------
+# get_distinct_projects
+# ---------------------------------------------------------------------------
+
+def test_get_distinct_projects_returns_flat_list_from_client():
+    """
+    Unlike the other two query functions, this one returns a flat list
+    of strings, not a list of tuples — result_rows themselves are still
+    single-element tuples (one column selected), so the function must
+    unwrap row[0] for each row.
+    """
+    rows = [("Website Redesign",), ("(no project)",)]
+    client = _FakeClickHouseClient(result_rows=rows)
+
+    assert get_distinct_projects(client) == ["Website Redesign", "(no project)"]
+
+
+def test_get_distinct_projects_queries_raw_tasks_table():
+    client = _FakeClickHouseClient()
+    get_distinct_projects(client)
+
+    assert "raw_tasks" in client.queries[0]
+    assert "DISTINCT" in client.queries[0]
+    assert "coalesce(project_name" in client.queries[0]
+
+
+def test_get_distinct_projects_empty_table_returns_empty_list():
+    client = _FakeClickHouseClient(result_rows=[])
+    assert get_distinct_projects(client) == []
