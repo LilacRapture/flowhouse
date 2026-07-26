@@ -12,13 +12,21 @@ import hmac
 import os
 
 import plotly.graph_objects as go
-from dash import Dash, dcc, html
+from dash import Dash, Input, Output, dcc, html
 from flask import Response, request
 
-from queries import get_client, get_overdue_trend, get_task_count_by_project_status
+from queries import (
+    get_client,
+    get_distinct_projects,
+    get_overdue_trend,
+    get_task_count_by_project_status,
+)
 
 DASHBOARD_USER = os.environ.get("DASHBOARD_USER", "admin")
 DASHBOARD_PASSWORD = os.environ.get("DASHBOARD_PASSWORD", "")
+
+_ALL_PROJECTS_VALUE = "__all__"
+_ALL_PROJECTS_LABEL = "All projects"
 
 app = Dash(
     __name__,
@@ -31,7 +39,6 @@ app = Dash(
     # app"`) triggers a real ClickHouse connection attempt.
     suppress_callback_exceptions=True,
 )
-server = app.server
 server = app.server
 
 
@@ -83,15 +90,14 @@ def _build_overdue_trend_figure() -> go.Figure:
     return figure
 
 
-def _build_task_count_figure() -> go.Figure:
+def _figure_from_task_count_rows(rows: list[tuple]) -> go.Figure:
     """
-    One grouped Bar trace per status (todo/in_progress/done), x-axis is
-    project name — a grouped (not stacked) layout reads more clearly
-    for this few statuses than a stacked bar would.
+    Builds the grouped bar chart from already-fetched-and-filtered rows.
+    Split out from _build_task_count_figure() so the project-filter
+    callback can reuse the plotting logic without re-running SQL, and
+    so it's unit-testable with plain Python tuples — no ClickHouse
+    client involved at all.
     """
-    client = get_client()
-    rows = get_task_count_by_project_status(client)
-
     projects = sorted({row[0] for row in rows})
     statuses = sorted({row[1] for row in rows})
     counts_by_project_status = {(row[0], row[1]): row[2] for row in rows}
@@ -115,6 +121,33 @@ def _build_task_count_figure() -> go.Figure:
     return figure
 
 
+def _build_task_count_figure(selected_project: str = _ALL_PROJECTS_VALUE) -> go.Figure:
+    """
+    Fetches current task-count rows and, if a specific project (not the
+    "All projects" sentinel) is selected, narrows to just that project
+    before building the figure. Filtering happens in Python, not SQL —
+    get_task_count_by_project_status()'s result set is small (one row
+    per project/status pair), so a second round-trip per dropdown change
+    isn't worth the extra query variant.
+    """
+    client = get_client()
+    rows = get_task_count_by_project_status(client)
+
+    if selected_project and selected_project != _ALL_PROJECTS_VALUE:
+        rows = [row for row in rows if row[0] == selected_project]
+
+    return _figure_from_task_count_rows(rows)
+
+
+def _project_dropdown_options() -> list[dict]:
+    client = get_client()
+    projects = get_distinct_projects(client)
+
+    return [{"label": _ALL_PROJECTS_LABEL, "value": _ALL_PROJECTS_VALUE}] + [
+        {"label": project, "value": project} for project in projects
+    ]
+
+
 def serve_layout() -> html.Div:
     """
     Assigned to app.layout as a callable (see module docstring) so it
@@ -125,12 +158,27 @@ def serve_layout() -> html.Div:
         [
             html.H1("flowhouse — TaskTracker analytics"),
             dcc.Graph(id="overdue-trend", figure=_build_overdue_trend_figure()),
+            html.Label("Filter by project:", htmlFor="project-filter"),
+            dcc.Dropdown(
+                id="project-filter",
+                options=_project_dropdown_options(),
+                value=_ALL_PROJECTS_VALUE,
+                clearable=False,
+            ),
             dcc.Graph(
                 id="task-count-by-project-status",
                 figure=_build_task_count_figure(),
             ),
         ]
     )
+
+
+@app.callback(
+    Output("task-count-by-project-status", "figure"),
+    Input("project-filter", "value"),
+)
+def _update_task_count_figure(selected_project: str) -> go.Figure:
+    return _build_task_count_figure(selected_project)
 
 
 app.layout = serve_layout

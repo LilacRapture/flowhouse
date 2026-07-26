@@ -73,3 +73,22 @@ def get_task_count_by_project_status(client) -> list[tuple]:
         """
     )
     return result.result_rows
+
+
+def get_distinct_projects(client) -> list[str]:
+    """
+    Distinct project names currently in raw_tasks, for the dashboard's
+    project-filter dropdown. Missing project is coalesced to the same
+    '(no project)' label used by get_task_count_by_project_status(), so
+    dropdown values always match what that query can return — the
+    dropdown never offers a project that would filter down to zero
+    matching rows.
+    """
+    result = client.query(
+        f"""
+        SELECT DISTINCT coalesce(project_name, '(no project)') AS project_name
+        FROM {RAW_TASKS_TABLE}
+        ORDER BY project_name
+        """
+    )
+    return [row[0] for row in result.result_rows]
