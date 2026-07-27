@@ -885,6 +885,49 @@ its own — this ADR only names the pattern connecting them).
 
 ---
 
+## ADR-022 — Interactive project filter added to dashboard; image-only deploy kept
+
+**Date:** Phase 4.1 (post-Phase-4 addition)
+**Status:** Accepted
+
+**Decision:** Added one `dcc.Dropdown` (project filter) and one
+`@app.callback` to `dashboard/app.py`, updating the previously static
+task-count bar chart on selection. Chart-building logic was split into
+`_figure_from_task_count_rows()` (pure, unit-testable) called by
+`_build_task_count_figure(selected_project)`. A new
+`queries.get_distinct_projects()` backs the dropdown's options list.
+
+**Context:** The filter was added to give a forthcoming
+Playwright E2E suite (`flowhouse-e2e`) a real user action to drive — the
+previous static two-chart dashboard offered nothing beyond a
+content-presence smoke test. Image-only deploy was reconsidered
+given the new app logic, and kept — not changed to bind-mount.
+
+**Alternatives considered:**
+- Switch to bind-mounted source + Dash's `dev_tools_hot_reload`/
+  `debug=True`, mirroring Airflow's live-reload workflow (ADR-003 there)
+  — rejected. `debug=True` enables Werkzeug's interactive debugger, a
+  known RCE-adjacent risk if the endpoint is ever reachable beyond
+  Basic Auth (defense-in-depth, not eliminated by auth alone). Also: one
+  dropdown + one callback is nowhere near the edit frequency that
+  originally justified bind-mounting for Airflow's actively-developed
+  DAGs — not a comparable case yet.
+
+**Consequences:**
+- `README.md`/`AGENTS.md` must state explicitly: any change to
+  `dashboard/app.py` or `queries.py` requires
+  `docker compose up --build dashboard` (one command, not `build` then
+  `up` as two separately-forgettable steps) — no live-reload today.
+- If dashboard iteration grows heavier (more filters/charts, frequent
+  edits), Compose Watch (`develop.watch` in `docker-compose.yml`,
+  available since Compose v2.22 — auto-rebuilds the image on file
+  change while still deploying strictly by image, no bind-mount/debug
+  mode needed) is the next thing to evaluate, not bind-mount. Not
+  implemented now — flagged as the concrete trigger for revisiting this
+  decision.
+
+---
+
 ## Template for new ADRs
 
 ```

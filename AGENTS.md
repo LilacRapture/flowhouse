@@ -91,6 +91,15 @@ See `docs/architecture.md` for the full picture. Short version:
 - [x] `dashboard/tests/` — auth boundary tests + query-layer tests
       against a fake ClickHouse client, own `pyproject.toml`/`requirements.txt`
 
+### Phase 4.1 — Done
+- [x] Interactive project filter (`dcc.Dropdown` + one `@app.callback`)
+      added on top of the task-count chart. Motivated by
+      giving the `flowhouse-e2e` Playwright suite a real user action to
+      drive, not just static-content presence.
+- [x] `queries.get_distinct_projects()` + unit tests
+      (`dashboard/tests/test_dashboard_filter.py`,
+      `test_queries.py::test_get_distinct_projects_*`)\
+
 ### Open Questions
 - Incremental loads (via `updated_at`) deferred — MVP is full-refresh.
   Revisit if TaskTracker's API grows an `updated_at` filter or data
