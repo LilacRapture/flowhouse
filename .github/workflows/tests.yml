@@ -42,10 +42,6 @@ jobs:
           python-version: "3.12"
           cache: "pip"
 
-      # pyspark (test_spark_ops.py) needs a real JRE to start a
-      # SparkSession. Pinned to 17 to match the JRE used in Dockerfile
-      # (default-jdk-headless / JAVA_HOME=.../java-17-openjdk-...), so
-      # CI and the container aren't silently running different JVMs.
       - name: Set up Java 17 (for PySpark)
         uses: actions/setup-java@v4
         with:
@@ -66,3 +62,52 @@ jobs:
 
       - name: Run tests
         run: pytest -v
+
+  test-dashboard:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: "pip"
+          cache-dependency-path: dashboard/requirements.txt
+
+      - name: Install dashboard dependencies
+        working-directory: dashboard
+        run: pip install -r requirements.txt
+
+      - name: Lint dashboard with ruff
+        working-directory: dashboard
+        run: ruff check .
+
+      - name: Run dashboard tests
+        working-directory: dashboard
+        run: pytest -v
+
+  publish-dashboard:
+    needs: [test, test-dashboard]
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    permissions:
+      packages: write   # GITHUB_TOKEN has no registry-write access by default
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push dashboard image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./dashboard
+          push: true
+          tags: |
+            ghcr.io/lilacrapture/flowhouse-dashboard:sha-${{ github.sha }}
+            ghcr.io/lilacrapture/flowhouse-dashboard:latest

@@ -928,6 +928,40 @@ given the new app logic, and kept — not changed to bind-mount.
 
 ---
 
+## ADR-023 — Publish dashboard image to GHCR after CI passes, consumed by flowhouse-e2e
+
+**Date:** Phase 4.2
+**Status:** Accepted
+
+**Decision:** A new `test-dashboard` CI job runs `dashboard/`'s own
+pytest+ruff suite. A new `publish-dashboard` job, gated on both 
+`test` and `test-dashboard` passing and only on pushes to `main`, 
+builds `dashboard/Dockerfile` and pushes to 
+`ghcr.io/lilacrapture/flowhouse-dashboard`, tagged both
+`sha-<commit sha>` (immutable) and `latest` (floating).
+`flowhouse-e2e`'s own CI now pulls a specific `sha-*` tag instead of
+checking out and building from this repo's source.
+
+**Context:** Cross-repo image publishing between `flowhouse` and 
+`flowhouse-e2e`. Turns the contract between the two repos from
+"shared source checkout" into "a versioned artifact".
+
+**Alternatives considered:** build-from-source.
+
+**Consequences:**
+- The `flowhouse-dashboard` GHCR package must be set to public
+  visibility manually, once, via package settings — otherwise
+  `flowhouse-e2e`'s CI (a different repository, unauthenticated pull)
+  cannot fetch it.
+- A `dashboard/` code change is invisible to `flowhouse-e2e` until (a)
+  it merges to `main` here, publishing a new `sha-*` tag, and (b)
+  someone bumps `dashboard-image.env` in `flowhouse-e2e` to that tag —
+  deliberate, not automatic propagation.
+- `dashboard/`'s own test suite now actually runs in CI for the first
+  time.
+
+---
+
 ## Template for new ADRs
 
 ```
