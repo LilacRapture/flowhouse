@@ -2,7 +2,10 @@
 Dash entrypoint for the flowhouse dashboard.
 
 Wraps the whole app behind HTTP Basic Auth via a plain Flask
-before_request hook — no dash-auth dependency.
+before_request hook — no dash-auth dependency. /health is the one
+deliberate exception (see _PUBLIC_PATHS) — needed for Docker's own
+healthcheck and Compose's `--wait`/`depends_on: condition: service_healthy`,
+neither of which can supply credentials.
 
 app.layout is assigned a FUNCTION, not a fixed Dash component tree —
 Dash calls that function fresh on every page load/session, which is
@@ -13,7 +16,7 @@ import os
 
 import plotly.graph_objects as go
 from dash import Dash, Input, Output, dcc, html
-from flask import Response, request
+from flask import Response, jsonify, request
 
 from queries import (
     get_client,
@@ -27,6 +30,12 @@ DASHBOARD_PASSWORD = os.environ.get("DASHBOARD_PASSWORD", "")
 
 _ALL_PROJECTS_VALUE = "__all__"
 _ALL_PROJECTS_LABEL = "All projects"
+
+# Paths that bypass Basic Auth entirely. Deliberately a small, explicit
+# allowlist rather than a pattern/prefix match — every entry here is a
+# conscious decision to expose that specific path, not an accident of a
+# broad regex.
+_PUBLIC_PATHS = {"/health"}
 
 app = Dash(
     __name__,
@@ -69,9 +78,25 @@ def _require_basic_auth():
     ahead of URL-routing/404 resolution. Returning a Response here short-
     circuits the request; returning None lets it proceed normally.
     """
+    if request.path in _PUBLIC_PATHS:
+        return None
+
     auth = request.authorization
     if not auth or not _check_auth(auth.username, auth.password):
         return _authentication_required()
+
+
+@server.route("/health")
+def _health():
+    """
+    Liveness probe for Docker/Compose healthchecks — deliberately does
+    NOT touch ClickHouse. This answers "is the Flask/Dash process up and
+    routing requests", not "can it reach its data source". A DB-down
+    scenario should surface as a broken chart on the actual dashboard
+    page, not a failed container healthcheck that restarts a perfectly
+    healthy process.
+    """
+    return jsonify(status="ok"), 200
 
 
 def _build_overdue_trend_figure() -> go.Figure:

@@ -18,16 +18,13 @@ services:
   clickhouse:
     image: clickhouse/clickhouse-server:24.8
     environment:
-      # Without at least one of these three, the image disables network
-      # access for the `default` user entirely (documented behavior) —
-      # so a dedicated user is required, not optional. See ADR-004.
       CLICKHOUSE_DB: ${CLICKHOUSE_DB}
       CLICKHOUSE_USER: ${CLICKHOUSE_USER}
       CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD}
       CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: "1"
     ports:
-      - "8123:8123"   # HTTP interface (used by clickhouse-connect)
-      - "9000:9000"   # native protocol
+      - "8123:8123"
+      - "9000:9000"
     volumes:
       - clickhouse_data:/var/lib/clickhouse
     healthcheck:
@@ -46,7 +43,6 @@ services:
       AIRFLOW__CORE__LOAD_EXAMPLES: "false"
       AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "true"
       AIRFLOW__WEBSERVER__EXPOSE_CONFIG: "false"
-      # Our own extractor/loader code lives outside dags/ so DAG files stay thin
       PYTHONPATH: /opt/airflow/src
       TASKTRACKER_BASE_URL: ${TASKTRACKER_BASE_URL}
       AIRFLOW_CONN_TASKTRACKER_API: ${AIRFLOW_CONN_TASKTRACKER_API}
@@ -56,9 +52,6 @@ services:
       CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD}
       TRANSFORM_ENGINE: ${TRANSFORM_ENGINE:-pandas}
     volumes:
-      # Bind-mounted (not baked into the image) so DAG/src edits are picked up
-      # without a rebuild — see ADR-003 for why this deviates from TaskTracker's
-      # image-only deploy (ADR-013 there).
       - ./dags:/opt/airflow/dags
       - ./src:/opt/airflow/src
       - ./tests:/opt/airflow/tests
@@ -83,6 +76,15 @@ services:
       CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD}
       DASHBOARD_USER: ${DASHBOARD_USER}
       DASHBOARD_PASSWORD: ${DASHBOARD_PASSWORD}
+    healthcheck:
+      # python, not wget/curl — dashboard's own image (python:3.12-slim)
+      # doesn't ship either by default, and adding one just for a
+      # healthcheck would be an extra apt-get layer for no other benefit.
+      # The interpreter running the app is already guaranteed present.
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8050/health')"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
     depends_on:
       clickhouse:
         condition: service_healthy
