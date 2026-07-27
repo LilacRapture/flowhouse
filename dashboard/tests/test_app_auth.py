@@ -59,4 +59,35 @@ def test_request_with_correct_credentials_passes_auth_boundary(client):
     headers = _basic_auth_header(DASHBOARD_USER, DASHBOARD_PASSWORD)
     response = client.get(PROBE_PATH, headers=headers)
     assert response.status_code != 401
-    
+
+
+# ---------------------------------------------------------------------------
+# /health — the one path deliberately exempted from Basic Auth
+# ---------------------------------------------------------------------------
+
+def test_health_returns_200_without_any_credentials(client):
+    response = client.get("/health")
+    assert response.status_code == 200
+    assert response.get_json() == {"status": "ok"}
+
+
+def test_health_ignores_bad_credentials_too(client):
+    """
+    /health bypasses the auth check entirely (path-based exemption in
+    before_request), not "any credentials, even wrong ones, are
+    accepted" — this confirms the exemption doesn't accidentally weaken
+    into a broader bypass triggered by malformed auth headers.
+    """
+    headers = _basic_auth_header("wrong-user", "wrong-password")
+    response = client.get("/health", headers=headers)
+    assert response.status_code == 200
+
+
+def test_other_paths_still_require_auth_after_health_exemption_added():
+    """
+    Regression guard: adding _PUBLIC_PATHS must not accidentally widen
+    into a prefix/pattern match that exempts more than intended.
+    """
+    client_ = server.test_client()
+    response = client_.get(PROBE_PATH)
+    assert response.status_code == 401
