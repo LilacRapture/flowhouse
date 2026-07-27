@@ -962,6 +962,45 @@ checking out and building from this repo's source.
 
 ---
 
+## ADR-024 — /health endpoint exempted from Basic Auth for container healthchecks
+
+**Date:** Phase 4.2
+**Status:** Accepted
+
+**Decision:** `dashboard/app.py`'s `before_request` hook exempts one
+explicit path, `/health`, from Basic Auth via a small `_PUBLIC_PATHS`
+allowlist. The endpoint itself only confirms the Flask process is
+routing requests — it never touches ClickHouse.
+
+**Context:** Needed for `docker-compose.yml`'s `dashboard` healthcheck
+and Compose's `--wait`/`depends_on: condition: service_healthy` (used
+by both local `docker compose up --wait` and `flowhouse-e2e`'s CI),
+neither of which can supply credentials. `/health` deliberately does
+NOT check ClickHouse reachability — a DB-down scenario should surface
+as a broken chart on the real dashboard page, not restart an otherwise
+healthy container in a crash loop.
+
+**Alternatives considered:**
+- Passing credentials into the healthcheck command itself (e.g.
+  `curl -u admin:$DASHBOARD_PASSWORD`) — avoids weakening the auth
+  perimeter at all, but couples the healthcheck's shell command to a
+  secret value and to whichever HTTP client happens to be in the image;
+  rejected in favor of one clearly-scoped public path.
+- Exempting by path *prefix* instead of an exact-match set — rejected;
+  an explicit set makes every exempted path a conscious decision,
+  not a side effect of a broad pattern.
+
+**Consequences:**
+- `/health` is now reachable by anyone who can reach the container at
+  all, without credentials — acceptable since it leaks nothing beyond
+  "the process is alive".
+- `dashboard/tests/test_app_auth.py` has explicit regression tests
+  (`test_health_returns_200_without_any_credentials`,
+  `test_other_paths_still_require_auth_after_health_exemption_added`)
+  guarding against `_PUBLIC_PATHS` accidentally widening scope later.
+
+---
+
 ## Template for new ADRs
 
 ```

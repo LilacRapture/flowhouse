@@ -93,6 +93,9 @@ Key points:
 - Protected by HTTP Basic Auth (`DASHBOARD_USER`/`DASHBOARD_PASSWORD` in
   `.env`) — demo-level access control, not a substitute for real auth if
   ever exposed beyond a local/demo host.
+- `/health` bypasses Basic Auth (liveness only, no ClickHouse check) —
+  backs the service's own Docker healthcheck and any external CI that
+  needs to know the container is ready without credentials
 
 ## Request Lifecycle
 

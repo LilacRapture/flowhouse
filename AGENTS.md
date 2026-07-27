@@ -98,7 +98,18 @@ See `docs/architecture.md` for the full picture. Short version:
       drive, not just static-content presence.
 - [x] `queries.get_distinct_projects()` + unit tests
       (`dashboard/tests/test_dashboard_filter.py`,
-      `test_queries.py::test_get_distinct_projects_*`)\
+      `test_queries.py::test_get_distinct_projects_*`)
+
+### Phase 4.2 — Done
+- [x] `/health` endpoint, exempted from Basic Auth
+- [x] `docker-compose.yml` dashboard healthcheck, using `/health`
+- [x] `test-dashboard` CI job — `dashboard/`'s own pytest+ruff suite was
+      configured (own `pyproject.toml`) but never actually wired into
+      `.github/workflows/tests.yml` until now
+- [x] `publish-dashboard` CI job — pushes to
+      `ghcr.io/lilacrapture/flowhouse-dashboard` (tags: `sha-<sha>` +
+      `latest`) after `test`+`test-dashboard` pass on `main`. 
+      Consumed by `flowhouse-e2e`'s CI
 
 ### Open Questions
 - Incremental loads (via `updated_at`) deferred — MVP is full-refresh.
